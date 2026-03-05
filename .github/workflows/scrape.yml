@@ -21,8 +21,21 @@ jobs:
           source .venv/bin/activate
           pip install -r requirements.txt
       - name: Run scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           cd scraper
           source .venv/bin/activate
           python main.py
-      # future steps: call AI engine and update DB
+      - name: Run AI enrichment
+        env:
+          GOOGLE_AI_KEY: ${{ secrets.GOOGLE_AI_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          cd ai
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+          python -c "from engine import rewrite_summary; print('AI engine ready')"
