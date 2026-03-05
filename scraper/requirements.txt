@@ -1,0 +1,4 @@
+feedparser
+pytrends
+supabase
+requests
