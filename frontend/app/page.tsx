@@ -15,9 +15,9 @@ import { useState, useEffect, useRef } from 'react'
 import { getArticles, Article } from '@/lib/supabase'
 import { fetchArticleImage, ArticleImage } from '@/lib/images'
 import {
-  Search, Download, ChevronDown, Play, User,
+  Search, Download, ChevronDown, Home as HomeIcon, Play, User,
   Flame, ExternalLink, ChevronLeft, ChevronRight,
-  Wifi, RefreshCw
+  MessageCircle
 } from 'lucide-react'
 
 // ── Trending topics (static seeds; in prod pull from DB tag counts) ──
@@ -154,6 +154,7 @@ function timeAgo(dateStr: string) {
 export default function Home() {
   const [articles, setArticles] = useState<Article[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('For you')
   const [activeNav, setActiveNav] = useState('Home')
   const [heroIndex, setHeroIndex] = useState(0)
@@ -162,8 +163,19 @@ export default function Home() {
   const heroRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    setLoading(true)
+    setError(null)
     getArticles(50, 0)
-      .then(data => setArticles(data))
+      .then(data => {
+        setArticles(data)
+        if (data.length === 0) {
+          setError('no_articles')
+        }
+      })
+      .catch(err => {
+        console.error('Failed to load articles:', err)
+        setError('fetch_failed')
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -318,6 +330,17 @@ export default function Home() {
         {loading ? (
           /* Skeleton hero */
           <div className="mx-4 rounded-2xl overflow-hidden bg-gray-200 dark:bg-gray-800 animate-pulse" style={{ height: '280px' }} />
+        ) : error === 'fetch_failed' ? (
+          <div className="mx-4 rounded-2xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-6 text-center">
+            <p className="text-red-600 font-bold text-sm mb-1">⚠️ Could not connect to database</p>
+            <p className="text-red-400 text-xs">Check your Supabase URL and anon key in <code>.env.local</code></p>
+          </div>
+        ) : error === 'no_articles' ? (
+          <div className="mx-4 rounded-2xl bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-6 text-center">
+            <p className="text-yellow-700 dark:text-yellow-400 font-bold text-sm mb-1">📭 No articles yet</p>
+            <p className="text-yellow-600 dark:text-yellow-500 text-xs mb-2">Your database is connected but empty. Run the scraper to populate articles.</p>
+            <code className="text-[10px] bg-yellow-100 dark:bg-yellow-900/40 px-2 py-1 rounded text-yellow-700 dark:text-yellow-400">cd scraper && python main.py</code>
+          </div>
         ) : heroArticles.length === 0 ? (
           <div className="text-center py-16 text-gray-400">No stories found.</div>
         ) : (
@@ -389,7 +412,7 @@ export default function Home() {
       {/* ── Bottom Nav ─────────────────────────────────────────── */}
       <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex z-50">
         {[
-          { icon: Home, label: 'Home', id: 'Home' },
+          { icon: HomeIcon, label: 'Home', id: 'Home' },
           { icon: Search, label: 'Football', id: 'Football' },
           { icon: Play, label: 'Video', id: 'Video' },
           { icon: User, label: 'Me', id: 'Me' },
