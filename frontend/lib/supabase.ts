@@ -15,6 +15,7 @@ export interface Article {
   body?: string
   tags?: string[]
   meta_description?: string
+  image_url?: string        // ← NEW: cached Pexel URL (optional)
   public: boolean
   created_at: string
   updated_at: string
