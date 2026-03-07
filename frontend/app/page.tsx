@@ -15,7 +15,7 @@ import { useState, useEffect, useRef } from 'react'
 import { getArticles, Article } from '@/lib/supabase'
 import { fetchArticleImage, ArticleImage } from '@/lib/images'
 import {
-  Search, Download, ChevronDown, Home, Play, User,
+  Search, Download, ChevronDown, Play, User,
   Flame, ExternalLink, ChevronLeft, ChevronRight,
   Wifi, RefreshCw
 } from 'lucide-react'
