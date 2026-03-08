@@ -32,8 +32,9 @@ export default function ArticleCard({ article }: { article: Article }) {
   useEffect(() => {
     if (!inView) return
     let cancelled = false
-    fetchArticleImage(tags, headline).then(img => { if (!cancelled) setImage(img) })
-    return () => { cancelled = true }
+    Promise.resolve(fetchArticleImage(tags, headline)).then(img => {
+      if (!cancelled) setImage(img)
+    })
   }, [inView, tags, headline])
 
   const truncatedSummary =
