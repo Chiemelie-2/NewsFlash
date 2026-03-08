@@ -30,12 +30,17 @@ export default function ArticleCard({ article }: { article: Article }) {
   }, [])
 
   useEffect(() => {
-    if (!inView) return
-    let cancelled = false
-    Promise.resolve(fetchArticleImage(tags, headline)).then(img => {
-      if (!cancelled) setImage(img)
-    })
-  }, [inView, tags, headline])
+  if (!inView) return
+
+  // 1. Use the image saved by the scraper (from Pixabay/source)
+  if (article.image_url) {
+    setImage({ src: article.image_url, alt: headline, source: 'db' })
+    return
+  }
+
+  // 2. Fall back to AI-generated SVG (synchronous, no network)
+  setImage(fetchArticleImage(tags, headline))
+  }, [inView, tags, headline, article.image_url])
 
   const truncatedSummary =
     summary.length > 180 ? summary.slice(0, 180).trimEnd() + '…' : summary
