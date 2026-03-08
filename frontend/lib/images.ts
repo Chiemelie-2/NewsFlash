@@ -1,129 +1,105 @@
 /**
  * images.ts
  * ─────────────────────────────────────────────────────────
- * Pexels image lookup with Claude AI-generated fallback.
+ * Image resolution for articles — NO live API calls from the browser.
  *
- * WHERE TO ADD IT:  frontend/lib/images.ts  (new file)
+ * Strategy (in order):
+ *  1. article.image_url  — saved by the scraper into Supabase at scrape time
+ *  2. AI-generated SVG   — themed gradient based on article topic/tags
  *
- * HOW IT WORKS:
- *  1. fetchArticleImage(keywords, articleId) is called from ArticleCard
- *  2. It first queries Pexels free API using the article tags/headline
- *  3. If Pexels returns nothing, it calls Claude claude-sonnet-4-20250514 to
- *     describe a vivid image and uses an SVG placeholder with that prompt
- *     (or swap for a real text-to-image API such as Replicate/Stability)
+ * Pixabay is called ONLY by the Python scraper (server-side, rate-limited
+ * properly). The frontend never touches Pixabay directly, so there are
+ * zero 429 errors and zero API key exposure in the browser.
  * ─────────────────────────────────────────────────────────
  */
-
-const PIXABAY_API_KEY = process.env.NEXT_PUBLIC_PIXABAY_API_KEY || ''
 
 export interface ArticleImage {
   src: string
   alt: string
-  photographer?: string
-  photographerUrl?: string
-  source: 'pixabay' | 'ai-generated'
+  source: 'db' | 'ai-generated'
 }
 
-/** Search Pixabay for a relevant photo */
-async function searchPixabay(query: string): Promise<ArticleImage | null> {
-  if (!PIXABAY_API_KEY) return null
-  try {
-    const params = new URLSearchParams({
-      key: PIXABAY_API_KEY,
-      q: query,
-      image_type: 'photo',
-      orientation: 'horizontal',
-      category: 'backgrounds',   // wide editorial-style shots
-      per_page: '3',
-      safesearch: 'true',
-      order: 'popular',
-    })
-    const res = await fetch(`https://pixabay.com/api/?${params}`)
-    if (!res.ok) return null
-    const data = await res.json()
-    const hit = data?.hits?.[0]
-    if (!hit) return null
-    return {
-      // webformatURL = ~640px wide, good balance of quality vs speed
-      // use largeImageURL for higher quality if needed
-      src: hit.webformatURL,
-      alt: query,
-      source: 'pixabay',
-    }
-  } catch {
-    return null
-  }
-}
+// ── In-memory SVG cache (avoids regenerating the same topic) ──────
+const svgCache = new Map<string, ArticleImage>()
 
-
-/** Generate a themed SVG image when Pixabay returns nothing */
-async function generateAIImage(headline: string, tags: string[]): Promise<ArticleImage> {
+// ── Generate a themed SVG gradient image ─────────────────────────
+export function generateAIImage(headline: string, tags: string[]): ArticleImage {
   const topic = tags[0] || headline.split(' ').slice(0, 3).join(' ')
+  const cacheKey = topic.toLowerCase().slice(0, 30)
+
+  if (svgCache.has(cacheKey)) return svgCache.get(cacheKey)!
+
   const colors = topicToColors(topic)
+  const label  = topic.replace(/[^a-zA-Z0-9 ]/g, '').toUpperCase().slice(0, 20)
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
     <defs>
-      <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" style="stop-color:${colors[0]};stop-opacity:1" />
-        <stop offset="100%" style="stop-color:${colors[1]};stop-opacity:1" />
+      <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%"   stop-color="${colors[0]}"/>
+        <stop offset="100%" stop-color="${colors[1]}"/>
       </linearGradient>
-      <filter id="blur"><feGaussianBlur stdDeviation="3"/></filter>
+      <filter id="b"><feGaussianBlur stdDeviation="4"/></filter>
     </defs>
-    <rect width="800" height="450" fill="url(#bg)"/>
-    <circle cx="650" cy="80"  r="120" fill="${colors[2]}" opacity="0.15" filter="url(#blur)"/>
-    <circle cx="100" cy="370" r="90"  fill="${colors[2]}" opacity="0.10" filter="url(#blur)"/>
-    <circle cx="400" cy="225" r="160" fill="${colors[2]}" opacity="0.07" filter="url(#blur)"/>
-    <text x="400" y="210" font-family="system-ui,sans-serif" font-size="40" font-weight="700"
-      fill="white" text-anchor="middle" opacity="0.92">${escapeXml(topic.toUpperCase())}</text>
-    <text x="400" y="255" font-family="system-ui,sans-serif" font-size="15"
-      fill="white" text-anchor="middle" opacity="0.65">AI Generated Preview</text>
+    <rect width="800" height="450" fill="url(#g)"/>
+    <circle cx="680" cy="70"  r="140" fill="${colors[2]}" opacity="0.12" filter="url(#b)"/>
+    <circle cx="80"  cy="380" r="100" fill="${colors[2]}" opacity="0.10" filter="url(#b)"/>
+    <circle cx="400" cy="225" r="180" fill="${colors[2]}" opacity="0.06" filter="url(#b)"/>
+    <rect x="60" y="170" width="680" height="2" fill="white" opacity="0.08"/>
+    <rect x="60" y="278" width="680" height="2" fill="white" opacity="0.08"/>
+    <text x="400" y="220" font-family="Georgia,serif" font-size="48" font-weight="700"
+      fill="white" text-anchor="middle" opacity="0.95" letter-spacing="2">${escXml(label)}</text>
+    <text x="400" y="260" font-family="system-ui,sans-serif" font-size="13"
+      fill="white" text-anchor="middle" opacity="0.5" letter-spacing="4">NEWSFLASH</text>
   </svg>`
 
-
-  const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`
-  return { src: dataUrl, alt: headline, source: 'ai-generated' }
+  const result: ArticleImage = {
+    src: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`,
+    alt: headline,
+    source: 'ai-generated',
+  }
+  svgCache.set(cacheKey, result)
+  return result
 }
 
-function escapeXml(str: string) {
-  return str.replace(/[<>&'"]/g, c =>
+function escXml(s: string) {
+  return s.replace(/[<>&'"]/g, c =>
     ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c] || c)
   )
 }
 
 function topicToColors(topic: string): [string, string, string] {
   const t = topic.toLowerCase()
-  if (t.includes('tech') || t.includes('ai') || t.includes('software') || t.includes('openai'))
-    return ['#1e3a5f', '#0f2027', '#4fc3f7']
-  if (t.includes('crypto') || t.includes('bitcoin') || t.includes('blockchain'))
-    return ['#1a1a2e', '#16213e', '#f7931a']
-  if (t.includes('business') || t.includes('finance') || t.includes('market'))
-    return ['#1b4332', '#081c15', '#40916c']
-  if (t.includes('apple') || t.includes('iphone') || t.includes('mac'))
-    return ['#1c1c1e', '#2c2c2e', '#8e8e93']
-  if (t.includes('tesla') || t.includes('electric') || t.includes('ev'))
-    return ['#cc0000', '#8b0000', '#ff6b6b']
-  if (t.includes('space') || t.includes('nasa') || t.includes('rocket'))
-    return ['#0b0c10', '#1f2833', '#66fcf1']
-  if (t.includes('google') || t.includes('alphabet'))
-    return ['#1a73e8', '#0d47a1', '#4285f4']
-  if (t.includes('microsoft') || t.includes('windows'))
-    return ['#003366', '#001f4d', '#00a4ef']
-  if (t.includes('meta') || t.includes('facebook'))
-    return ['#1877f2', '#0c4a9e', '#42b3ff']
-  if (t.includes('amazon') || t.includes('aws'))
-    return ['#ff9900', '#b36b00', '#ffb84d']
-  return ['#2d3561', '#1a1a2e', '#6c63ff']
+  if (t.match(/tech|ai|software|openai|chatgpt|nvidia|robot/))  return ['#1e3a5f','#0f2027','#4fc3f7']
+  if (t.match(/crypto|bitcoin|blockchain|ethereum|defi/))        return ['#1a1a2e','#16213e','#f7931a']
+  if (t.match(/business|finance|market|economy|stock|trade/))    return ['#1b4332','#081c15','#40916c']
+  if (t.match(/apple|iphone|mac|ipad|ios/))                      return ['#1c1c1e','#2c2c2e','#8e8e93']
+  if (t.match(/tesla|electric|ev|car|auto/))                     return ['#7f1d1d','#450a0a','#ef4444']
+  if (t.match(/space|nasa|rocket|spacex|satellite/))             return ['#0b0c10','#1f2833','#66fcf1']
+  if (t.match(/google|alphabet|search|youtube/))                 return ['#1a73e8','#0d47a1','#4285f4']
+  if (t.match(/microsoft|windows|azure|xbox/))                   return ['#003366','#001f4d','#00a4ef']
+  if (t.match(/meta|facebook|instagram|whatsapp/))               return ['#1877f2','#0c4a9e','#42b3ff']
+  if (t.match(/amazon|aws|retail|ecommerce/))                    return ['#78350f','#451a03','#f59e0b']
+  if (t.match(/iran|war|military|conflict|ukraine|nato/))        return ['#7c2d12','#450a0a','#fb923c']
+  if (t.match(/health|medical|covid|vaccine|hospital/))          return ['#164e63','#0c4a6e','#06b6d4']
+  if (t.match(/politic|election|government|president|congress/)) return ['#1e1b4b','#0f0d2e','#818cf8']
+  if (t.match(/sport|football|basketball|soccer|nba|nfl/))       return ['#14532d','#052e16','#4ade80']
+  if (t.match(/music|film|movie|entertain|celeb|award/))         return ['#4a044e','#2e0033','#e879f9']
+  return ['#2d3561','#1a1a2e','#6c63ff']
 }
 
-/** Main export — tries Pixabay first, then AI fallback */
-export async function fetchArticleImage(
+/**
+ * Main export — resolves an image for an article.
+ * Call this with article.image_url (from DB) when available,
+ * otherwise falls back to the SVG generator.
+ *
+ * Usage in components:
+ *   if (article.image_url) → use directly as <img src={article.image_url}>
+ *   else → const img = fetchArticleImage(article.tags, article.headline)
+ */
+export function fetchArticleImage(
   keywords: string[],
   headline: string
-): Promise<ArticleImage> {
-  const query = keywords.slice(0, 3).join(' ') || headline.slice(0, 50)
-
-  const pixabayResult = await searchPixabay(query)
-  if (pixabayResult) return pixabayResult
-
+): ArticleImage {
+  // Pure SVG generation — synchronous, zero network calls
   return generateAIImage(headline, keywords)
 }

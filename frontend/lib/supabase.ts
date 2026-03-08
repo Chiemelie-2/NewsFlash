@@ -3,6 +3,10 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ Missing Supabase env vars. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in .env.local')
+}
+
 export const supabase = createClient(supabaseUrl, supabaseKey)
 
 export interface Article {
@@ -15,7 +19,7 @@ export interface Article {
   body?: string
   tags?: string[]
   meta_description?: string
-  image_url?: string        // ← NEW: cached Pexel URL (optional)
+  image_url?: string
   public: boolean
   created_at: string
   updated_at: string
@@ -30,10 +34,11 @@ export async function getArticles(limit = 10, offset = 0): Promise<Article[]> {
     .range(offset, offset + limit - 1)
 
   if (error) {
-    console.error('Error fetching articles:', error)
+    console.error('❌ Error fetching articles:', error.message, error.hint || '')
     return []
   }
 
+  console.log(`✅ Fetched ${data?.length ?? 0} articles`)
   return data || []
 }
 
@@ -46,10 +51,9 @@ export async function getArticlesByTag(tag: string): Promise<Article[]> {
     .order('published', { ascending: false })
 
   if (error) {
-    console.error('Error fetching articles by tag:', error)
+    console.error('❌ Error fetching articles by tag:', error.message)
     return []
   }
-
   return data || []
 }
 
@@ -62,9 +66,8 @@ export async function searchArticles(query: string): Promise<Article[]> {
     .order('published', { ascending: false })
 
   if (error) {
-    console.error('Error searching articles:', error)
+    console.error('❌ Error searching articles:', error.message)
     return []
   }
-
   return data || []
 }

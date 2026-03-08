@@ -77,3 +77,24 @@ create policy "Anyone can update reactions"
 
 create policy "Anyone can report comments"
   on comments for update using (true);
+
+-- ═══════════════════════════════════════════════════════════════
+-- CLEANUP: Strip HTML tags from existing articles in the DB
+-- Run this ONCE in Supabase SQL Editor to fix old data
+-- ═══════════════════════════════════════════════════════════════
+
+-- This removes all <li>, <ol>, <a href=...>, <font>, etc. from summaries
+UPDATE articles
+SET summary = regexp_replace(
+  regexp_replace(summary, '<[^>]+>', ' ', 'g'),
+  '\s+', ' ', 'g'
+)
+WHERE summary ~ '<[^>]+>';
+
+-- Also clean the body column if it has HTML
+UPDATE articles
+SET body = regexp_replace(
+  regexp_replace(body, '<[^>]+>', ' ', 'g'),
+  '\s+', ' ', 'g'
+)
+WHERE body ~ '<[^>]+>';

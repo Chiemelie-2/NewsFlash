@@ -5,11 +5,36 @@
 """
 
 import os
+import re
 import feedparser
 import requests
 from supabase import create_client, Client
 from typing import List, Optional
 from postgrest import APIError
+
+try:
+    from social_publisher import publish_article
+except ImportError:
+    publish_article = None  # optional — runs fine without it
+
+
+def strip_html(text: str) -> str:
+    """Remove all HTML tags and decode common entities from a string."""
+    if not text:
+        return ""
+    # Remove HTML tags
+    clean = re.sub(r'<[^>]+>', ' ', text)
+    # Decode common HTML entities
+    entities = {
+        '&amp;': '&', '&lt;': '<', '&gt;': '>',
+        '&quot;': '"', '&#39;': "'", '&nbsp;': ' ',
+        '&apos;': "'",
+    }
+    for ent, char in entities.items():
+        clean = clean.replace(ent, char)
+    # Collapse extra whitespace
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return clean
 
 try:
     from ai import engine
@@ -113,10 +138,10 @@ def insert_article(entry: dict):
         print(f"  ℹ No Pixabay image — frontend will generate AI preview")
 
     article = {
-        "title": title,
+        "title": strip_html(title),
         "source_url": entry.get("link"),
         "published": entry.get("published"),
-        "summary": entry.get("summary"),
+        "summary": strip_html(entry.get("summary", "")),
         "headline": None,
         "body": None,
         "tags": [],
@@ -144,7 +169,7 @@ def main():
             inserted = insert_article(entry)
             if inserted and engine:
                 article_id = inserted[0].get("id")
-                summary = entry.get("summary", "")
+                summary = strip_html(entry.get("summary", ""))
                 try:
                     enriched = engine.rewrite_summary(summary, url)
                     if article_id:
@@ -160,8 +185,19 @@ def main():
                             update_data["meta_description"] = enriched["meta"]
                         update_data["public"] = True
                         supa.table("articles").update(update_data).eq("id", article_id).execute()
+
+                        # ── Auto-post to Twitter & Facebook ──────────
+                        if publish_article:
+                            full_article = {**inserted[0], **update_data}
+                            publish_article(full_article)
+
                 except Exception as e:
                     print(f"AI enrichment failed for {url}: {e}")
+
+            elif inserted and publish_article:
+                # No AI engine — still post the raw article
+                publish_article(inserted[0])
+
         else:
             print(f"Skipping existing article {url}")
 

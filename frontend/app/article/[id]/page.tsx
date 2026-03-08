@@ -59,6 +59,21 @@ function getColor(name: string) {
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]
 }
 
+function stripHtml(html: string): string {
+  if (!html) return ""
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, `"`)
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 function timeAgo(d: string) {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000)
   if (s < 60) return 'Just now'
@@ -260,8 +275,13 @@ export default function ArticlePage() {
       .then(({ data }) => {
         if (data) {
           setArticle(data)
-          fetchArticleImage(data.tags || [], data.headline || data.title)
-            .then(setImage)
+          // Use DB-cached image first — avoids a Pixabay API call
+          if (data.image_url) {
+            setImage({ src: data.image_url, alt: data.headline || data.title, source: 'db' })
+          } else {
+            // Sync SVG — no network call
+            setImage(fetchArticleImage(data.tags || [], data.headline || data.title))
+          }
         }
         setLoading(false)
       })
@@ -479,11 +499,13 @@ export default function ArticlePage() {
           </p>
         )}
 
-        {/* Body */}
+        {/* Body — strips any residual HTML tags from older RSS data */}
         <div className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed space-y-3">
-          {(article.body || article.summary || '').split('\n').filter(Boolean).map((p, i) => (
-            <p key={i}>{p}</p>
-          ))}
+          {stripHtml(article.body || article.summary || '')
+            .split('\n')
+            .filter(Boolean)
+            .map((p, i) => <p key={i}>{p}</p>)
+          }
         </div>
 
         {/* Source link */}
