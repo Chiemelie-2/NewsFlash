@@ -1,9 +1,9 @@
 'use client'
 
 /**
- * frontend/app/article/[id]/page.tsx  ← NEW FILE
+ * frontend/app/article/[id]/page.tsx
  *
- * Full story page — shown when user taps "Full Story" on any card.
+ * Full story page — shown when user taps any article card.
  * Features:
  *  ✅ Full article body + hero image
  *  ✅ Facebook-style comment section (no login required)
@@ -14,6 +14,7 @@
  *  ✅ Comment count badge
  *  ✅ Real-time optimistic UI (comments appear instantly)
  *  ✅ All data stored in Supabase comments table
+ *  ✅ Football platform visual theme
  */
 
 import { useEffect, useState, useRef } from 'react'
@@ -23,7 +24,7 @@ import { fetchArticleImage, ArticleImage } from '@/lib/images'
 import {
   ArrowLeft, ExternalLink, ThumbsUp, Heart, Laugh,
   MessageCircle, Flag, Send, ChevronDown, ChevronUp,
-  MoreHorizontal, X
+  MoreHorizontal, X, Share2, BookOpen
 } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────
@@ -49,8 +50,8 @@ const REACTIONS = [
 ]
 
 const AVATAR_COLORS = [
-  '#e53e3e','#dd6b20','#d69e2e','#38a169',
-  '#3182ce','#805ad5','#d53f8c','#00b5d8',
+  '#ef4444','#f97316','#eab308','#22c55e',
+  '#00FF87','#3b82f6','#a855f7','#ec4899',
 ]
 
 function getColor(name: string) {
@@ -76,8 +77,8 @@ function stripHtml(html: string): string {
 
 function timeAgo(d: string) {
   const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000)
-  if (s < 60) return 'Just now'
-  if (s < 3600) return `${Math.floor(s/60)}m ago`
+  if (s < 60)    return 'Just now'
+  if (s < 3600)  return `${Math.floor(s/60)}m ago`
   if (s < 86400) return `${Math.floor(s/3600)}h ago`
   return `${Math.floor(s/86400)}d ago`
 }
@@ -85,11 +86,26 @@ function timeAgo(d: string) {
 // ── Reaction picker ──────────────────────────────────────────────
 function ReactionPicker({ onPick }: { onPick: (r: string) => void }) {
   return (
-    <div className="absolute bottom-8 left-0 flex gap-1 bg-white dark:bg-gray-800 rounded-full shadow-xl border border-gray-200 dark:border-gray-700 px-2 py-1.5 z-20">
+    <div style={{
+      position: 'absolute', bottom: '28px', left: 0,
+      display: 'flex', gap: '4px',
+      background: 'var(--pitch-surface)',
+      border: '1px solid var(--pitch-border)',
+      borderRadius: '24px',
+      padding: '6px 10px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+      zIndex: 20,
+    }}>
       {REACTIONS.map(r => (
         <button key={r.key} onClick={() => onPick(r.key)}
-          className="text-xl hover:scale-125 transition-transform active:scale-110"
-          title={r.label}>
+          title={r.label}
+          style={{
+            fontSize: '20px', background: 'none', border: 'none', cursor: 'pointer',
+            transition: 'transform 0.15s', padding: '2px',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1.3)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'scale(1)' }}
+        >
           {r.icon}
         </button>
       ))}
@@ -108,7 +124,7 @@ function CommentItem({
   depth?: number
 }) {
   const [showPicker, setShowPicker] = useState(false)
-  const [showMenu, setShowMenu] = useState(false)
+  const [showMenu, setShowMenu]     = useState(false)
   const [showReplies, setShowReplies] = useState(true)
   const pickerRef = useRef<HTMLDivElement>(null)
 
@@ -123,8 +139,10 @@ function CommentItem({
 
   if (comment.reported) {
     return (
-      <div className={`${depth > 0 ? 'ml-10' : ''} py-2`}>
-        <p className="text-xs text-gray-400 italic">This comment has been reported and is under review.</p>
+      <div style={{ marginLeft: depth > 0 ? '40px' : '0', padding: '8px 0' }}>
+        <p style={{ fontFamily: 'var(--font-body)', fontSize: '12px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+          This comment has been reported and is under review.
+        </p>
       </div>
     )
   }
@@ -132,37 +150,71 @@ function CommentItem({
   const totalReactions = (comment.reactions.thumbs || 0) + (comment.reactions.heart || 0) + (comment.reactions.laugh || 0)
 
   return (
-    <div className={`${depth > 0 ? 'ml-10 mt-2' : 'mt-4'}`}>
-      <div className="flex gap-2.5">
+    <div style={{ marginLeft: depth > 0 ? '40px' : '0', marginTop: depth > 0 ? '8px' : '16px' }}>
+      <div style={{ display: 'flex', gap: '10px' }}>
         {/* Avatar */}
-        <div className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm"
-          style={{ backgroundColor: comment.author_color }}>
+        <div style={{
+          flexShrink: 0, width: '36px', height: '36px', borderRadius: '50%',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: comment.author_color,
+          fontFamily: 'var(--font-display)', fontSize: '15px', fontWeight: 800,
+          color: '#000', textTransform: 'uppercase',
+        }}>
           {comment.author_initial}
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div style={{ flex: 1, minWidth: 0 }}>
           {/* Bubble */}
-          <div className="bg-gray-100 dark:bg-gray-700 rounded-2xl rounded-tl-sm px-3 py-2 relative">
-            <p className="text-xs font-bold text-gray-900 dark:text-white mb-0.5">{comment.author_name}</p>
-            <p className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed">{comment.body}</p>
+          <div style={{
+            background: 'var(--pitch-surface)',
+            border: '1px solid var(--pitch-border)',
+            borderRadius: '12px 12px 12px 3px',
+            padding: '10px 12px',
+            position: 'relative',
+          }}>
+            <p style={{
+              fontFamily: 'var(--font-display)', fontSize: '12px', fontWeight: 700,
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+              color: 'var(--text-primary)', marginBottom: '4px',
+            }}>
+              {comment.author_name}
+            </p>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              {comment.body}
+            </p>
 
             {/* 3-dot menu */}
-            <div className="absolute top-2 right-2">
+            <div style={{ position: 'absolute', top: '8px', right: '8px' }}>
               <button onClick={() => setShowMenu(v => !v)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '2px' }}>
                 <MoreHorizontal size={14} />
               </button>
               {showMenu && (
-                <div className="absolute right-0 top-5 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 z-10 w-36">
+                <div style={{
+                  position: 'absolute', right: 0, top: '20px',
+                  background: 'var(--pitch-mid)', border: '1px solid var(--pitch-border)',
+                  borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                  zIndex: 10, minWidth: '140px', overflow: 'hidden',
+                }}>
                   <button
                     onClick={() => { onReport(comment.id); setShowMenu(false) }}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl"
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
+                      padding: '10px 12px', fontFamily: 'var(--font-mono)', fontSize: '11px',
+                      fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                      color: 'var(--red-card)', background: 'none', border: 'none', cursor: 'pointer',
+                    }}
                   >
-                    <Flag size={12} /> Report comment
+                    <Flag size={11} /> Report
                   </button>
                   <button onClick={() => setShowMenu(false)}
-                    className="flex items-center gap-2 w-full px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-xl">
-                    <X size={12} /> Cancel
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '8px', width: '100%',
+                      padding: '10px 12px', fontFamily: 'var(--font-mono)', fontSize: '11px',
+                      fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase',
+                      color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer',
+                    }}>
+                    <X size={11} /> Cancel
                   </button>
                 </div>
               )}
@@ -170,18 +222,22 @@ function CommentItem({
           </div>
 
           {/* Action row */}
-          <div className="flex items-center gap-4 mt-1 ml-1">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '4px', marginLeft: '4px' }}>
             {/* Reaction button */}
-            <div className="relative" ref={pickerRef}>
+            <div style={{ position: 'relative' }} ref={pickerRef}>
               <button
                 onMouseEnter={() => setShowPicker(true)}
                 onClick={() => comment.user_reaction
                   ? onReact(comment.id, comment.user_reaction)
                   : setShowPicker(v => !v)
                 }
-                className={`text-xs font-semibold transition-colors ${
-                  comment.user_reaction ? 'text-blue-600' : 'text-gray-500 dark:text-gray-400 hover:text-blue-600'
-                }`}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700,
+                  letterSpacing: '0.06em', textTransform: 'uppercase',
+                  color: comment.user_reaction ? 'var(--green-spark)' : 'var(--text-muted)',
+                  transition: 'color 0.15s',
+                }}
               >
                 {comment.user_reaction
                   ? REACTIONS.find(r => r.key === comment.user_reaction)?.icon + ' ' + REACTIONS.find(r => r.key === comment.user_reaction)?.label
@@ -196,21 +252,28 @@ function CommentItem({
             {/* Reply */}
             {depth === 0 && (
               <button onClick={() => onReply(comment.id, comment.author_name)}
-                className="text-xs font-semibold text-gray-500 dark:text-gray-400 hover:text-blue-600 transition-colors">
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700,
+                  letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)',
+                  transition: 'color 0.15s',
+                }}>
                 Reply
               </button>
             )}
 
             {/* Time */}
-            <span className="text-[10px] text-gray-400">{timeAgo(comment.created_at)}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', letterSpacing: '0.04em' }}>
+              {timeAgo(comment.created_at)}
+            </span>
 
             {/* Reaction summary */}
             {totalReactions > 0 && (
-              <span className="text-[10px] text-gray-400 ml-auto">
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', marginLeft: 'auto', letterSpacing: '0.04em' }}>
                 {[
                   comment.reactions.thumbs > 0 ? `👍 ${comment.reactions.thumbs}` : '',
-                  comment.reactions.heart > 0  ? `❤️ ${comment.reactions.heart}` : '',
-                  comment.reactions.laugh > 0  ? `😂 ${comment.reactions.laugh}` : '',
+                  comment.reactions.heart  > 0 ? `❤️ ${comment.reactions.heart}` : '',
+                  comment.reactions.laugh  > 0 ? `😂 ${comment.reactions.laugh}` : '',
                 ].filter(Boolean).join('  ')}
               </span>
             )}
@@ -219,7 +282,12 @@ function CommentItem({
           {/* Replies toggle */}
           {comment.replies && comment.replies.length > 0 && (
             <button onClick={() => setShowReplies(v => !v)}
-              className="flex items-center gap-1 text-xs font-semibold text-blue-600 mt-1 ml-1">
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', marginLeft: '4px',
+                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700,
+                letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--green-spark)',
+              }}>
               {showReplies ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               {showReplies ? 'Hide' : 'View'} {comment.replies.length} {comment.replies.length === 1 ? 'reply' : 'replies'}
             </button>
@@ -241,16 +309,16 @@ export default function ArticlePage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
 
-  const [article, setArticle]     = useState<Article | null>(null)
-  const [image, setImage]         = useState<ArticleImage | null>(null)
-  const [comments, setComments]   = useState<Comment[]>([])
-  const [loading, setLoading]     = useState(true)
+  const [article, setArticle]         = useState<Article | null>(null)
+  const [image, setImage]             = useState<ArticleImage | null>(null)
+  const [comments, setComments]       = useState<Comment[]>([])
+  const [loading, setLoading]         = useState(true)
   const [commLoading, setCommLoading] = useState(true)
 
   // Author name (persisted in localStorage — feels like "logged in")
-  const [authorName, setAuthorName] = useState('')
-  const [nameSet, setNameSet]       = useState(false)
-  const [nameInput, setNameInput]   = useState('')
+  const [authorName, setAuthorName]   = useState('')
+  const [nameSet, setNameSet]         = useState(false)
+  const [nameInput, setNameInput]     = useState('')
 
   const [commentText, setCommentText] = useState('')
   const [replyTo, setReplyTo]         = useState<{ id: string; name: string } | null>(null)
@@ -429,58 +497,134 @@ export default function ArticlePage() {
     setTimeout(() => commentInputRef.current?.focus(), 100)
   }
 
+  // ── Share ─────────────────────────────────────────────────────
+  function handleShare() {
+    if (navigator.share && article) {
+      navigator.share({ title: article.headline || article.title, url: window.location.href })
+    } else {
+      navigator.clipboard.writeText(window.location.href)
+    }
+  }
+
   const totalComments = comments.reduce((acc, c) => acc + 1 + (c.replies?.length || 0), 0)
 
-  // ── Render ───────────────────────────────────────────────────
+  // ── Loading skeleton ─────────────────────────────────────────
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 max-w-md mx-auto">
-        <div className="h-64 bg-gray-200 dark:bg-gray-800 animate-pulse" />
-        <div className="p-4 space-y-3">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="h-4 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" style={{ width: `${90 - i * 10}%` }} />
+      <div style={{ minHeight: '100vh', background: 'var(--pitch-black)', maxWidth: '680px', margin: '0 auto' }}>
+        <div style={{ height: '280px', background: 'var(--pitch-surface)', animation: 'shimmer 1.5s infinite', backgroundSize: '200% 100%' }} />
+        <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} style={{
+              height: '14px', borderRadius: '3px',
+              background: 'var(--pitch-surface)',
+              animation: 'shimmer 1.5s infinite',
+              backgroundSize: '200% 100%',
+              width: `${90 - i * 8}%`,
+            }} />
           ))}
         </div>
+        <style>{`@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }`}</style>
       </div>
     )
   }
 
   if (!article) return (
-    <div className="min-h-screen flex items-center justify-center text-gray-400">Article not found.</div>
+    <div style={{
+      minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'var(--pitch-black)',
+    }}>
+      <p style={{ fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+        Article not found.
+      </p>
+    </div>
   )
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-950 max-w-md mx-auto" style={{ fontFamily: "'Georgia', serif" }}>
+    <div style={{ minHeight: '100vh', background: 'var(--pitch-black)', maxWidth: '680px', margin: '0 auto' }}>
 
       {/* ── Back header ──────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 bg-white/90 dark:bg-gray-900/90 backdrop-blur border-b border-gray-100 dark:border-gray-800 px-4 py-3 flex items-center gap-3">
-        <button onClick={() => router.back()}
-          className="w-9 h-9 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-          <ArrowLeft size={18} className="text-gray-700 dark:text-gray-300" />
+      <header style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        background: 'rgba(10,10,10,0.92)',
+        backdropFilter: 'blur(12px)',
+        borderBottom: '1px solid var(--pitch-border)',
+        padding: '0 16px',
+        height: '52px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+      }}>
+        <button
+          onClick={() => router.back()}
+          style={{
+            width: '36px', height: '36px', borderRadius: '6px',
+            border: '1px solid var(--pitch-border)', background: 'var(--pitch-surface)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', color: 'var(--text-secondary)', flexShrink: 0,
+          }}
+        >
+          <ArrowLeft size={16} />
         </button>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs text-red-600 font-bold">NewsFlash</p>
-          <p className="text-sm font-semibold text-gray-900 dark:text-white truncate leading-tight">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.12em', color: 'var(--green-spark)', textTransform: 'uppercase', marginBottom: '1px' }}>
+            NewsFlash ⚽
+          </p>
+          <p style={{
+            fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 700,
+            letterSpacing: '0.02em', textTransform: 'uppercase',
+            color: 'var(--text-primary)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
             {article.headline || article.title}
           </p>
         </div>
+        <button
+          onClick={handleShare}
+          style={{
+            width: '36px', height: '36px', borderRadius: '6px',
+            border: '1px solid var(--pitch-border)', background: 'var(--pitch-surface)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', color: 'var(--text-secondary)', flexShrink: 0,
+          }}
+        >
+          <Share2 size={15} />
+        </button>
       </header>
 
       {/* ── Hero image ───────────────────────────────────────── */}
       {image && (
-        <div className="relative w-full" style={{ height: '240px' }}>
-          <img src={image.src} alt={image.alt} className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+        <div style={{ position: 'relative', width: '100%', height: '260px' }}>
+          <img src={image.src} alt={image.alt} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%)' }} />
+          {image.source === 'ai-generated' && (
+            <span style={{
+              position: 'absolute', bottom: '10px', right: '10px',
+              background: 'rgba(88,28,220,0.85)', color: 'white',
+              fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
+              letterSpacing: '0.08em', padding: '2px 8px', borderRadius: '2px',
+            }}>
+              AI PREVIEW
+            </span>
+          )}
         </div>
       )}
 
       {/* ── Article content ──────────────────────────────────── */}
-      <div className="px-4 py-5">
+      <div style={{ padding: '20px 16px' }}>
+
         {/* Tags */}
         {article.tags && article.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-3">
-            {article.tags.slice(0, 4).map(t => (
-              <span key={t} className="px-2 py-0.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[10px] font-bold rounded-full uppercase tracking-wide">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+            {article.tags.slice(0, 5).map(t => (
+              <span key={t} style={{
+                padding: '3px 10px',
+                background: 'var(--green-glow)',
+                border: '1px solid rgba(0,255,135,0.25)',
+                color: 'var(--green-spark)',
+                fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
+                letterSpacing: '0.1em', borderRadius: '2px', textTransform: 'uppercase',
+              }}>
                 {t}
               </span>
             ))}
@@ -488,54 +632,100 @@ export default function ArticlePage() {
         )}
 
         {/* Headline */}
-        <h1 className="text-xl font-black text-gray-900 dark:text-white leading-tight mb-2">
+        <h1 style={{
+          fontFamily: 'var(--font-display)', fontSize: 'clamp(24px, 5vw, 36px)',
+          fontWeight: 900, letterSpacing: '-0.01em', textTransform: 'uppercase',
+          color: 'var(--text-primary)', lineHeight: 1.05, marginBottom: '12px',
+        }}>
           {article.headline || article.title}
         </h1>
 
         {/* Meta description */}
         {article.meta_description && (
-          <p className="text-sm text-gray-500 dark:text-gray-400 italic mb-4 border-l-2 border-red-500 pl-3">
+          <p style={{
+            fontFamily: 'var(--font-body)', fontSize: '14px', fontStyle: 'italic',
+            color: 'var(--text-secondary)', marginBottom: '16px',
+            borderLeft: '3px solid var(--green-spark)', paddingLeft: '12px', lineHeight: 1.6,
+          }}>
             {article.meta_description}
           </p>
         )}
 
+        {/* Meta row */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px',
+          paddingBottom: '16px', borderBottom: '1px solid var(--pitch-border)',
+        }}>
+          <BookOpen size={12} style={{ color: 'var(--text-muted)' }} />
+          <time style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+            {new Date(article.published || article.created_at).toLocaleDateString('en-GB', {
+              weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            })}
+          </time>
+          {article.source_name && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--green-spark)', letterSpacing: '0.05em' }}>
+              · {article.source_name}
+            </span>
+          )}
+        </div>
+
         {/* Body — strips any residual HTML tags from older RSS data */}
-        <div className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed space-y-3">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
           {stripHtml(article.body || article.summary || '')
             .split('\n')
             .filter(Boolean)
-            .map((p, i) => <p key={i}>{p}</p>)
+            .map((p, i) => (
+              <p key={i} style={{
+                fontFamily: 'var(--font-body)', fontSize: '15px',
+                color: 'var(--text-secondary)', lineHeight: 1.75,
+              }}>
+                {p}
+              </p>
+            ))
           }
         </div>
 
         {/* Source link */}
-        <a href={article.source_url} target="_blank" rel="noopener noreferrer"
-          className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-red-600 border border-red-200 dark:border-red-800 rounded-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-          Read original source <ExternalLink size={12} />
+        <a
+          href={article.source_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700,
+            letterSpacing: '0.08em', textTransform: 'uppercase',
+            color: 'var(--green-spark)',
+            border: '1px solid rgba(0,255,135,0.3)',
+            padding: '8px 16px', borderRadius: '4px',
+            textDecoration: 'none',
+            transition: 'background 0.15s',
+          }}
+        >
+          Read original source <ExternalLink size={11} />
         </a>
-
-        {/* Published date */}
-        <p className="text-xs text-gray-400 mt-3">
-          {new Date(article.published || article.created_at).toLocaleDateString('en-US', {
-            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-          })}
-        </p>
       </div>
 
       {/* ── Divider ──────────────────────────────────────────── */}
-      <div className="h-2 bg-gray-100 dark:bg-gray-800" />
+      <div style={{ height: '6px', background: 'var(--pitch-surface)' }} />
 
       {/* ── Comments Section ─────────────────────────────────── */}
-      <div className="px-4 py-4">
+      <div style={{ padding: '16px 16px 0' }}>
 
         {/* Header */}
-        <div className="flex items-center gap-2 mb-4">
-          <MessageCircle size={18} className="text-gray-700 dark:text-gray-300" />
-          <h2 className="text-base font-black text-gray-900 dark:text-white">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <MessageCircle size={18} style={{ color: 'var(--text-primary)' }} />
+          <h2 style={{
+            fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 800,
+            letterSpacing: '0.03em', textTransform: 'uppercase', color: 'var(--text-primary)',
+          }}>
             Comments
           </h2>
           {totalComments > 0 && (
-            <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+            <span style={{
+              background: 'var(--green-spark)', color: '#000',
+              fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700,
+              letterSpacing: '0.06em', padding: '2px 8px', borderRadius: '12px',
+            }}>
               {totalComments}
             </span>
           )}
@@ -543,23 +733,37 @@ export default function ArticlePage() {
 
         {/* ── Name setup (if not set) ───────────────────────── */}
         {!nameSet && (
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-2xl p-4 mb-4">
-            <p className="text-sm font-semibold text-gray-800 dark:text-white mb-1">
+          <div style={{
+            background: 'var(--pitch-surface)', border: '1px solid var(--pitch-border)',
+            borderRadius: '10px', padding: '16px', marginBottom: '16px',
+          }}>
+            <p style={{ fontFamily: 'var(--font-display)', fontSize: '15px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-primary)', marginBottom: '4px' }}>
               What's your name?
             </p>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--text-muted)', marginBottom: '12px' }}>
               Set your display name once and it will be saved for future comments — just like being signed in.
             </p>
-            <div className="flex gap-2">
+            <div style={{ display: 'flex', gap: '8px' }}>
               <input
                 value={nameInput}
                 onChange={e => setNameInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && saveName()}
                 placeholder="Your name…"
-                className="flex-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-full px-4 py-2 text-sm outline-none focus:border-blue-500 dark:text-white"
+                style={{
+                  flex: 1, background: 'var(--pitch-mid)', border: '1px solid var(--pitch-border)',
+                  borderRadius: '6px', padding: '10px 14px', fontFamily: 'var(--font-body)',
+                  fontSize: '14px', color: 'var(--text-primary)', outline: 'none',
+                }}
               />
-              <button onClick={saveName}
-                className="bg-blue-600 text-white rounded-full px-4 py-2 text-sm font-semibold hover:bg-blue-700 transition-colors">
+              <button
+                onClick={saveName}
+                style={{
+                  background: 'var(--green-spark)', color: '#000', border: 'none',
+                  borderRadius: '6px', padding: '10px 16px', fontFamily: 'var(--font-display)',
+                  fontSize: '14px', fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase',
+                  cursor: 'pointer',
+                }}
+              >
                 Save
               </button>
             </div>
@@ -568,15 +772,23 @@ export default function ArticlePage() {
 
         {/* ── Name badge (if set) ───────────────────────────── */}
         {nameSet && (
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
-              style={{ backgroundColor: getColor(authorName) }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: getColor(authorName),
+              fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 800, color: '#000', flexShrink: 0,
+            }}>
               {authorName.charAt(0).toUpperCase()}
             </div>
             <div>
-              <p className="text-xs font-bold text-gray-800 dark:text-white">{authorName}</p>
-              <button onClick={() => { setNameSet(false); setNameInput(authorName) }}
-                className="text-[10px] text-blue-500 hover:underline">
+              <p style={{ fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', color: 'var(--text-primary)' }}>
+                {authorName}
+              </p>
+              <button
+                onClick={() => { setNameSet(false); setNameInput(authorName) }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.06em', color: 'var(--green-spark)', padding: 0, textTransform: 'uppercase' }}
+              >
                 Change name
               </button>
             </div>
@@ -585,21 +797,34 @@ export default function ArticlePage() {
 
         {/* ── Comment input ─────────────────────────────────── */}
         {nameSet && (
-          <div className="mb-5">
+          <div style={{ marginBottom: '20px' }}>
             {replyTo && (
-              <div className="flex items-center gap-2 bg-blue-50 dark:bg-blue-900/20 rounded-xl px-3 py-2 mb-2">
-                <span className="text-xs text-blue-600 font-medium">↩ Replying to {replyTo.name}</span>
-                <button onClick={() => setReplyTo(null)} className="ml-auto">
-                  <X size={13} className="text-blue-400" />
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                background: 'var(--pitch-surface)', border: '1px solid var(--pitch-border)',
+                borderRadius: '6px', padding: '8px 12px', marginBottom: '8px',
+              }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.06em', color: 'var(--green-spark)', textTransform: 'uppercase' }}>
+                  ↩ Replying to {replyTo.name}
+                </span>
+                <button onClick={() => setReplyTo(null)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
+                  <X size={13} />
                 </button>
               </div>
             )}
-            <div className="flex gap-2 items-end">
-              <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-white text-sm font-bold"
-                style={{ backgroundColor: getColor(authorName) }}>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+              <div style={{
+                width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: getColor(authorName),
+                fontFamily: 'var(--font-display)', fontSize: '15px', fontWeight: 800, color: '#000',
+              }}>
                 {authorName.charAt(0).toUpperCase()}
               </div>
-              <div className="flex-1 bg-gray-100 dark:bg-gray-800 rounded-2xl px-3 py-2 flex items-end gap-2">
+              <div style={{
+                flex: 1, background: 'var(--pitch-surface)', border: '1px solid var(--pitch-border)',
+                borderRadius: '10px', padding: '10px 12px', display: 'flex', alignItems: 'flex-end', gap: '8px',
+              }}>
                 <textarea
                   ref={commentInputRef}
                   value={commentText}
@@ -607,8 +832,12 @@ export default function ArticlePage() {
                   onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitComment() } }}
                   placeholder={replyTo ? `Reply to ${replyTo.name}…` : 'Write a comment…'}
                   rows={1}
-                  className="flex-1 bg-transparent text-sm text-gray-800 dark:text-white outline-none resize-none leading-relaxed"
-                  style={{ maxHeight: '120px' }}
+                  style={{
+                    flex: 1, background: 'transparent',
+                    border: 'none', outline: 'none', resize: 'none',
+                    fontFamily: 'var(--font-body)', fontSize: '14px', color: 'var(--text-primary)',
+                    lineHeight: 1.5, maxHeight: '120px',
+                  }}
                   onInput={e => {
                     const el = e.currentTarget
                     el.style.height = 'auto'
@@ -618,9 +847,15 @@ export default function ArticlePage() {
                 <button
                   onClick={submitComment}
                   disabled={!commentText.trim() || submitting}
-                  className="flex-shrink-0 w-7 h-7 rounded-full bg-red-600 flex items-center justify-center disabled:opacity-40 hover:bg-red-700 transition-colors"
+                  style={{
+                    flexShrink: 0, width: '32px', height: '32px', borderRadius: '50%',
+                    background: commentText.trim() ? 'var(--green-spark)' : 'var(--pitch-border)',
+                    border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: commentText.trim() ? 'pointer' : 'not-allowed',
+                    transition: 'background 0.15s',
+                  }}
                 >
-                  <Send size={13} className="text-white" />
+                  <Send size={13} color={commentText.trim() ? '#000' : 'var(--text-muted)'} />
                 </button>
               </div>
             </div>
@@ -629,22 +864,26 @@ export default function ArticlePage() {
 
         {/* ── Comments list ─────────────────────────────────── */}
         {commLoading ? (
-          <div className="space-y-4 mt-4">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="flex gap-2.5 animate-pulse">
-                <div className="w-9 h-9 rounded-full bg-gray-200 dark:bg-gray-700 flex-shrink-0" />
-                <div className="flex-1 space-y-2">
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/3" />
-                  <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-3/4" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--pitch-surface)', flexShrink: 0, animation: 'shimmer 1.5s infinite', backgroundSize: '200% 100%' }} />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ height: '12px', background: 'var(--pitch-surface)', borderRadius: '3px', width: '30%', animation: 'shimmer 1.5s infinite', backgroundSize: '200% 100%' }} />
+                  <div style={{ height: '12px', background: 'var(--pitch-surface)', borderRadius: '3px', width: '70%', animation: 'shimmer 1.5s infinite', backgroundSize: '200% 100%' }} />
                 </div>
               </div>
             ))}
           </div>
         ) : comments.length === 0 ? (
-          <div className="text-center py-8">
-            <MessageCircle size={32} className="text-gray-300 dark:text-gray-600 mx-auto mb-2" />
-            <p className="text-sm text-gray-400 dark:text-gray-500">No comments yet.</p>
-            <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">Be the first to share your thoughts!</p>
+          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <MessageCircle size={36} style={{ color: 'var(--pitch-border)', margin: '0 auto 12px' }} />
+            <p style={{ fontFamily: 'var(--font-display)', fontSize: '16px', fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+              No comments yet
+            </p>
+            <p style={{ fontFamily: 'var(--font-body)', fontSize: '13px', color: 'var(--pitch-muted)', marginTop: '6px' }}>
+              Be the first to share your thoughts!
+            </p>
           </div>
         ) : (
           <div>
@@ -657,7 +896,14 @@ export default function ArticlePage() {
       </div>
 
       {/* Bottom padding for safe area */}
-      <div className="h-10" />
+      <div style={{ height: '48px' }} />
+
+      <style>{`
+        @keyframes shimmer {
+          0%   { background-position: -200% 0; }
+          100% { background-position:  200% 0; }
+        }
+      `}</style>
     </div>
   )
 }

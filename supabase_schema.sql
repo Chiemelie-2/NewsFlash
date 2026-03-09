@@ -1,30 +1,54 @@
--- ═══════════════════════════════════════════════════════════════
--- NewsFlash — Supabase Schema  (updated)
--- Run this in the Supabase SQL editor
--- ═══════════════════════════════════════════════════════════════
+-- ─────────────────────────────────────────────────────────
+-- Supabase / PostgreSQL schema for NewsFlash Football
+-- ─────────────────────────────────────────────────────────
 
+-- ── Articles table ──────────────────────────────────────────
 create table if not exists articles (
     id               uuid primary key default gen_random_uuid(),
     title            text,
     source_url       text unique,
+    source_name      text,          -- "Sky Sports", "BBC Sport", "ESPN", etc.
     published        timestamp,
     summary          text,
-    headline         text,          -- AI SEO headline
-    body             text,          -- AI rewritten article
-    tags             text[],        -- SEO tags array
-    meta_description text,          -- Google meta description
-    image_url        text,          -- ← NEW: Pexels cached image URL
+    headline         text,          -- AI-rewritten headline
+    body             text,          -- AI-rewritten body
+    tags             text[],        -- PostgreSQL array for tag list
+    meta_description text,
+    -- image_url: scraped OG image or Pixabay result.
+    -- Saved by the scraper server-side. Frontend reads this first;
+    -- falls back to AI-generated SVG if NULL.
+    image_url        text,
+    -- section: football platform nav section
+    -- values: 'breaking' | 'transfers' | 'gist' | 'investigations'
+    --         | 'analysis' | 'history' | 'players'
+    section          text default 'breaking',
     public           boolean default false,
     created_at       timestamptz default now(),
     updated_at       timestamptz default now()
 );
 
--- Index for fast tag lookups
-create index if not exists idx_articles_tags on articles using gin(tags);
--- Index for fast source_url dedup checks
-create index if not exists idx_articles_source_url on articles(source_url);
+-- ── Comments table ───────────────────────────────────────────
+create table if not exists comments (
+    id             uuid primary key default gen_random_uuid(),
+    article_id     uuid references articles(id) on delete cascade,
+    parent_id      uuid references comments(id) on delete cascade,
+    author_name    text not null,
+    author_initial text,
+    author_color   text,
+    body           text not null,
+    reactions      jsonb default '{"thumbs":0,"heart":0,"laugh":0}'::jsonb,
+    reported       boolean default false,
+    created_at     timestamptz default now()
+);
 
--- Trigger: auto-update updated_at
+-- ── Indexes ──────────────────────────────────────────────────
+create index if not exists idx_articles_section  on articles(section);
+create index if not exists idx_articles_public   on articles(public);
+create index if not exists idx_articles_published on articles(published desc);
+create index if not exists idx_comments_article  on comments(article_id);
+create index if not exists idx_comments_parent   on comments(parent_id);
+
+-- ── updated_at trigger ────────────────────────────────────────
 create or replace function update_updated_at_column()
 returns trigger as $$
 begin
@@ -34,67 +58,41 @@ end;
 $$ language 'plpgsql';
 
 drop trigger if exists update_articles_updated_at on articles;
+
 create trigger update_articles_updated_at
     before update on articles
     for each row
     execute procedure update_updated_at_column();
 
--- If upgrading from the original schema, run this to add the image_url column:
--- alter table articles add column if not exists image_url text;
+-- ── Migration: add columns to existing tables ─────────────────
+-- Run these if upgrading from the original NewsApp schema:
+--
+-- alter table articles add column if not exists image_url   text;
+-- alter table articles add column if not exists section     text default 'breaking';
+-- alter table articles add column if not exists source_name text;
 
--- ═══════════════════════════════════════════════════════════════
--- Comments table  (NEW — run this to enable comments)
--- ═══════════════════════════════════════════════════════════════
-
-create table if not exists comments (
-    id            uuid primary key default gen_random_uuid(),
-    article_id    uuid not null references articles(id) on delete cascade,
-    parent_id     uuid references comments(id) on delete cascade,
-    author_name   text not null,
-    author_initial text not null,
-    author_color  text not null,
-    body          text not null,
-    reactions     jsonb not null default '{"thumbs":0,"heart":0,"laugh":0}',
-    reported      boolean not null default false,
-    created_at    timestamptz default now()
+-- ── Fan Polls table ───────────────────────────────────────────
+create table if not exists polls (
+    id         uuid primary key default gen_random_uuid(),
+    question   text not null,
+    options    jsonb not null,   -- [{id, label, emoji}]
+    votes      jsonb default '{}'::jsonb,  -- {optionId: count}
+    active     boolean default true,
+    created_at timestamptz default now()
 );
 
--- Indexes for fast lookups per article
-create index if not exists idx_comments_article_id on comments(article_id);
-create index if not exists idx_comments_parent_id  on comments(parent_id);
-
--- Enable Row Level Security (allow anyone to read + insert)
-alter table comments enable row level security;
-
-create policy "Anyone can read comments"
-  on comments for select using (true);
-
-create policy "Anyone can post comments"
-  on comments for insert with check (true);
-
-create policy "Anyone can update reactions"
-  on comments for update using (true);
-
-create policy "Anyone can report comments"
-  on comments for update using (true);
-
--- ═══════════════════════════════════════════════════════════════
--- CLEANUP: Strip HTML tags from existing articles in the DB
--- Run this ONCE in Supabase SQL Editor to fix old data
--- ═══════════════════════════════════════════════════════════════
-
--- This removes all <li>, <ol>, <a href=...>, <font>, etc. from summaries
-UPDATE articles
-SET summary = regexp_replace(
-  regexp_replace(summary, '<[^>]+>', ' ', 'g'),
-  '\s+', ' ', 'g'
-)
-WHERE summary ~ '<[^>]+>';
-
--- Also clean the body column if it has HTML
-UPDATE articles
-SET body = regexp_replace(
-  regexp_replace(body, '<[^>]+>', ' ', 'g'),
-  '\s+', ' ', 'g'
-)
-WHERE body ~ '<[^>]+>';
+-- ── Transfer rumors table ─────────────────────────────────────
+create table if not exists transfer_rumors (
+    id            uuid primary key default gen_random_uuid(),
+    player        text not null,
+    player_nation text,
+    from_club     text,
+    from_league   text,
+    to_club       text,
+    to_league     text,
+    fee           text,
+    source        text,
+    status        text default 'rumour',   -- 'confirmed' | 'likely' | 'rumour'
+    updated_at    timestamptz default now(),
+    created_at    timestamptz default now()
+);

@@ -33,39 +33,21 @@ BODY:
 <full article body here>
 """
 
-
-def fetch_image(query: str) -> str:
-    """Fetch a relevant image URL from Pexels."""
-    if not PEXELS_API_KEY:
-        return ""
-    
-    try:
-        resp = requests.get(
-            "https://api.pexels.com/v1/search",
-            headers={"Authorization": PEXELS_API_KEY},
-            params={"query": query, "per_page": 1},
-            timeout=10
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("photos"):
-            return data["photos"][0]["src"]["large"]
-    except:
-        pass
-    return ""
-
-
 def rewrite_summary(summary: str, source: str) -> Dict[str, str]:
-    """Send summary to Gemini and return enriched article dict."""
+    """Send the summary to Gemini and return a dict with headline, body, tags, etc."""
     if not API_KEY:
         raise RuntimeError("GOOGLE_AI_KEY not set in environment")
 
-    prompt = f"{AGENTIC_PROMPT}\n\nRAW SUMMARY:\n{summary}\n\nSOURCE: {source}"
+    prompt = f"{AGENTIC_PROMPT}\n\nSummary:\n{summary}\n\nSource: {source}"
 
+    # Call the real Gemini API. `generateContent` is newer, fallback to `generateText`.
     url = f"{API_BASE}/{MODEL}:generateContent?key={API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    # payload structure for v1 models (text-bison, etc.)
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 800},
+        "input": prompt,
+        "temperature": 0.7,
+        "max_output_tokens": 1000,
     }
 
     try:
@@ -76,49 +58,68 @@ def rewrite_summary(summary: str, source: str) -> Dict[str, str]:
             resp = requests.post(url2, json=payload, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
     except requests.exceptions.RequestException as e:
         body = getattr(e.response, 'text', None) if hasattr(e, 'response') else None
         # log failure and return simple fallback
         print(f"AI request failed ({e}); body={body}")
         return {
-            "headline": summary[:70],
+            "headline": summary[:60] + "...",
             "body": summary,
             "tags": [],
-            "meta": summary[:155],
+            "meta": "",
         }
 
-   # Parse structured output
-    headline, meta, tags_str, body_lines = "", "", "", []
-    current = None
-    for line in text.splitlines():
-        low = line.lower()
-        if low.startswith("seo_headline:"):
-            headline = line.split(":", 1)[1].strip()
-            current = "headline"
-        elif low.startswith("meta:"):
-            meta = line.split(":", 1)[1].strip()
-            current = "meta"
-        elif low.startswith("tags:"):
-            tags_str = line.split(":", 1)[1].strip()
-            current = "tags"
-        elif low.startswith("body:"):
-            current = "body"
-            rest = line.split(":", 1)[1].strip()
-            if rest:
-                body_lines.append(rest)
-        elif current == "body":
-            body_lines.append(line)
+    # Extract text from the response
+    try:
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError) as e:
+        print(f"Unable to parse AI response, returning summary. raw={data}")
+        return {
+            "headline": summary[:60] + "...",
+            "body": summary,
+            "tags": [],
+            "meta": "",
+        }
 
-    tags = [t.strip() for t in tags_str.split(",") if t.strip()]
+    # Parse the structured output
+    lines = text.splitlines()
+    headline = ""
+    meta = ""
+    tags: list[str] = []
+    body_lines: list[str] = []
+    current_section = None
+
+    for line in lines:
+        line_lower = line.lower()
+        if line_lower.startswith("headline:"):
+            headline = line.partition(":")[2].strip()
+            current_section = "headline"
+        elif line_lower.startswith("meta:"):
+            meta = line.partition(":")[2].strip()
+            current_section = "meta"
+        elif line_lower.startswith("tags:"):
+            tags = [t.strip() for t in line.partition(":")[2].split(",") if t.strip()]
+            current_section = "tags"
+        elif line_lower.startswith("body:"):
+            current_section = "body"
+            # consume the "Body:" prefix and add any remainder to body_lines
+            body_text = line.partition(":")[2].strip()
+            if body_text:
+                body_lines.append(body_text)
+        else:
+            # continuation of current section
+            if current_section == "body":
+                body_lines.append(line)
+
     body = "\n".join(body_lines).strip()
 
-    # Fetch image using first tag or headline
-    image_query = tags[0] if tags else headline.split()[:3]
-    image_url = fetch_image(image_query if isinstance(image_query, str) else " ".join(image_query))
-
-    return {"headline": headline, "body": body, "tags": tags, "meta": meta, "image_url": image_url,}
-
+    result = {
+        "headline": headline,
+        "body": body,
+        "tags": tags,
+        "meta": meta,
+    }
+    return result
 
 
 if __name__ == "__main__":
@@ -127,13 +128,27 @@ if __name__ == "__main__":
     print(rewrite_summary(sample, "https://nasa.gov/news"))
 
 
-#""" (
-#   "Act as a senior journalist. Rewrite the following news summary into a 400-word article. "
-#    "Maintain a professional tone. Ensure 100% originality. Include a catchy headline, "
-#   "meta-description, and 5 relevant tags. "
-#   "Format your response with clear sections:\n"
-#   "Headline: <the headline>\n"
-#    "Meta: <meta description>\n"
-#   "Tags: <comma-separated tags>\n"
-#   "Body: <the full article body>"
-#) """
+#""" Simple wrapper for Google AI Studio (Gemini) rewriting agent."""
+
+#import os
+#import requests
+#from typing import Dict
+
+# Official Gemini API base and model version
+# use v1 endpoint for broader compatibility
+#API_BASE = "https://generativelanguage.googleapis.com/v1/models"
+# you can change this to a model available to your API key
+# common free-tier model: text-bison-001
+#MODEL = "text-bison-001"
+#API_KEY = os.getenv("GOOGLE_AI_KEY")
+
+#AGENTIC_PROMPT = (
+#    "Act as a senior journalist. Rewrite the following news summary into a 400-word article. "
+#  "Maintain a professional tone. Ensure 100% originality. Include a catchy headline, "
+#    "meta-description, and 5 relevant tags. "
+#    "Format your response with clear sections:\n"
+#    "Headline: <the headline>\n"
+ #   "Meta: <meta description>\n"
+#    "Tags: <comma-separated tags>\n"
+#    "Body: <the full article body>"
+#)

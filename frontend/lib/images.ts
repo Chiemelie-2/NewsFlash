@@ -5,7 +5,7 @@
  *
  * Strategy (in order):
  *  1. article.image_url  — saved by the scraper into Supabase at scrape time
- *  2. AI-generated SVG   — themed gradient based on article topic/tags
+ *  2. AI-generated SVG   — football-themed gradient based on article topic/tags
  *
  * Pixabay is called ONLY by the Python scraper (server-side, rate-limited
  * properly). The frontend never touches Pixabay directly, so there are
@@ -16,13 +16,14 @@
 export interface ArticleImage {
   src: string
   alt: string
+  /** 'db' = saved image URL from scraper | 'ai-generated' = fallback SVG */
   source: 'db' | 'ai-generated'
 }
 
 // ── In-memory SVG cache (avoids regenerating the same topic) ──────
 const svgCache = new Map<string, ArticleImage>()
 
-// ── Generate a themed SVG gradient image ─────────────────────────
+// ── Generate a football-themed SVG gradient image ─────────────────
 export function generateAIImage(headline: string, tags: string[]): ArticleImage {
   const topic = tags[0] || headline.split(' ').slice(0, 3).join(' ')
   const cacheKey = topic.toLowerCase().slice(0, 30)
@@ -32,24 +33,32 @@ export function generateAIImage(headline: string, tags: string[]): ArticleImage 
   const colors = topicToColors(topic)
   const label  = topic.replace(/[^a-zA-Z0-9 ]/g, '').toUpperCase().slice(0, 20)
 
+  // Football-pitch-style SVG with field lines as background motif
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450">
     <defs>
       <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop offset="0%"   stop-color="${colors[0]}"/>
         <stop offset="100%" stop-color="${colors[1]}"/>
       </linearGradient>
-      <filter id="b"><feGaussianBlur stdDeviation="4"/></filter>
+      <filter id="b"><feGaussianBlur stdDeviation="5"/></filter>
     </defs>
     <rect width="800" height="450" fill="url(#g)"/>
-    <circle cx="680" cy="70"  r="140" fill="${colors[2]}" opacity="0.12" filter="url(#b)"/>
-    <circle cx="80"  cy="380" r="100" fill="${colors[2]}" opacity="0.10" filter="url(#b)"/>
-    <circle cx="400" cy="225" r="180" fill="${colors[2]}" opacity="0.06" filter="url(#b)"/>
-    <rect x="60" y="170" width="680" height="2" fill="white" opacity="0.08"/>
-    <rect x="60" y="278" width="680" height="2" fill="white" opacity="0.08"/>
-    <text x="400" y="220" font-family="Georgia,serif" font-size="48" font-weight="700"
-      fill="white" text-anchor="middle" opacity="0.95" letter-spacing="2">${escXml(label)}</text>
-    <text x="400" y="260" font-family="system-ui,sans-serif" font-size="13"
-      fill="white" text-anchor="middle" opacity="0.5" letter-spacing="4">NEWSFLASH</text>
+    <!-- pitch centre circle motif -->
+    <circle cx="400" cy="225" r="120" fill="none" stroke="white" stroke-width="1.5" opacity="0.06"/>
+    <circle cx="400" cy="225" r="5"   fill="white" opacity="0.08"/>
+    <!-- centre line -->
+    <line x1="400" y1="30" x2="400" y2="420" stroke="white" stroke-width="1" opacity="0.05"/>
+    <!-- penalty arcs -->
+    <path d="M 120 165 A 80 80 0 0 1 120 285" fill="none" stroke="white" stroke-width="1" opacity="0.05"/>
+    <path d="M 680 165 A 80 80 0 0 0 680 285" fill="none" stroke="white" stroke-width="1" opacity="0.05"/>
+    <!-- glow blobs -->
+    <circle cx="680" cy="70"  r="160" fill="${colors[2]}" opacity="0.10" filter="url(#b)"/>
+    <circle cx="80"  cy="380" r="120" fill="${colors[2]}" opacity="0.08" filter="url(#b)"/>
+    <!-- label -->
+    <text x="400" y="212" font-family="'Barlow Condensed',sans-serif" font-size="52" font-weight="900"
+      fill="white" text-anchor="middle" opacity="0.92" letter-spacing="3">${escXml(label)}</text>
+    <text x="400" y="248" font-family="'JetBrains Mono',monospace" font-size="11"
+      fill="white" text-anchor="middle" opacity="0.4" letter-spacing="6">NEWSFLASH ⚽</text>
   </svg>`
 
   const result: ArticleImage = {
@@ -67,34 +76,36 @@ function escXml(s: string) {
   )
 }
 
+// ── Football-topic colour palette ─────────────────────────────────
 function topicToColors(topic: string): [string, string, string] {
   const t = topic.toLowerCase()
-  if (t.match(/tech|ai|software|openai|chatgpt|nvidia|robot/))  return ['#1e3a5f','#0f2027','#4fc3f7']
-  if (t.match(/crypto|bitcoin|blockchain|ethereum|defi/))        return ['#1a1a2e','#16213e','#f7931a']
-  if (t.match(/business|finance|market|economy|stock|trade/))    return ['#1b4332','#081c15','#40916c']
-  if (t.match(/apple|iphone|mac|ipad|ios/))                      return ['#1c1c1e','#2c2c2e','#8e8e93']
-  if (t.match(/tesla|electric|ev|car|auto/))                     return ['#7f1d1d','#450a0a','#ef4444']
-  if (t.match(/space|nasa|rocket|spacex|satellite/))             return ['#0b0c10','#1f2833','#66fcf1']
-  if (t.match(/google|alphabet|search|youtube/))                 return ['#1a73e8','#0d47a1','#4285f4']
-  if (t.match(/microsoft|windows|azure|xbox/))                   return ['#003366','#001f4d','#00a4ef']
-  if (t.match(/meta|facebook|instagram|whatsapp/))               return ['#1877f2','#0c4a9e','#42b3ff']
-  if (t.match(/amazon|aws|retail|ecommerce/))                    return ['#78350f','#451a03','#f59e0b']
-  if (t.match(/iran|war|military|conflict|ukraine|nato/))        return ['#7c2d12','#450a0a','#fb923c']
-  if (t.match(/health|medical|covid|vaccine|hospital/))          return ['#164e63','#0c4a6e','#06b6d4']
-  if (t.match(/politic|election|government|president|congress/)) return ['#1e1b4b','#0f0d2e','#818cf8']
-  if (t.match(/sport|football|basketball|soccer|nba|nfl/))       return ['#14532d','#052e16','#4ade80']
-  if (t.match(/music|film|movie|entertain|celeb|award/))         return ['#4a044e','#2e0033','#e879f9']
-  return ['#2d3561','#1a1a2e','#6c63ff']
+  if (t.match(/transfer|deal|sign|contract|fee/))             return ['#0f172a','#1e3a5f','#38bdf8']
+  if (t.match(/premier league|epl|english/))                  return ['#1a0533','#3b0764','#a855f7']
+  if (t.match(/champions league|ucl|europa/))                 return ['#0c1445','#1e3a8a','#3b82f6']
+  if (t.match(/la liga|spain|barcelona|real madrid/))         return ['#4a0404','#7f1d1d','#ef4444']
+  if (t.match(/bundesliga|germany|bundesliga/))               return ['#1a0a00','#431407','#f97316']
+  if (t.match(/serie a|italy|juventus|inter|milan/))          return ['#0a0a1a','#1e1b4b','#6366f1']
+  if (t.match(/injury|fitness|return|knock/))                 return ['#0c1a0c','#14532d','#22c55e']
+  if (t.match(/goal|score|result|win|loss|defeat/))           return ['#0a0f0a','#052e16','#00FF87']
+  if (t.match(/haaland|mbapp|bellingham|salah|kane/))         return ['#0f0f0f','#1c1c1c','#fbbf24']
+  if (t.match(/referee|var|offside|penalty|red card/))        return ['#2d0000','#450a0a','#ef4444']
+  if (t.match(/history|legend|classic|greatest|nostalgia/))   return ['#1a1206','#292524','#d97706']
+  if (t.match(/tactic|formation|analysis|system/))            return ['#0a1628','#0c2340','#0ea5e9']
+  if (t.match(/corruption|scandal|investigation/))            return ['#1a0a00','#3b1c08','#f59e0b']
+  if (t.match(/world cup|international|national/))            return ['#0a0e1a','#0f172a','#60a5fa']
+  return ['#0a0a0a','#111827','#00FF87']
 }
 
 /**
  * Main export — resolves an image for an article.
  * Call this with article.image_url (from DB) when available,
- * otherwise falls back to the SVG generator.
+ * otherwise falls back to the football SVG generator.
  *
  * Usage in components:
  *   if (article.image_url) → use directly as <img src={article.image_url}>
  *   else → const img = fetchArticleImage(article.tags, article.headline)
+ *
+ * This function is synchronous — no .then() needed.
  */
 export function fetchArticleImage(
   keywords: string[],

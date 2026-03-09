@@ -1,34 +1,68 @@
-"""Scraper and trend detector for NewsFlash.
-  ✅ Uses Pixabay API (free, no attribution required, 100 req/min)
-  ✅ Fetches an image per article and saves image_url to Supabase DB
-  ✅ Falls back gracefully if Pixabay API key is not set
+"""Scraper and trend detector for NewsFlash Football.
+
+This module reads Google News RSS (football-focused queries), filters
+football-relevant entries, scrapes OG images from source pages, and
+inserts new items into Supabase to avoid duplicates.
+
+Image strategy:
+  1. Scrape OG image from source article (og:image meta tag)
+  2. Fall back to Pixabay API search by tags
+  3. If neither available, leave image_url as NULL — frontend uses SVG fallback
+
+Section tagging:
+  Articles are auto-tagged into platform sections based on keyword matching:
+  breaking | transfers | gist | investigations | analysis | history | players
 """
 
 import os
-import feedparser
+import re
 import requests
-from supabase import create_client, Client
+import feedparser
 from bs4 import BeautifulSoup
+from supabase import create_client, Client
 from typing import List, Optional
-from postgrest import APIError
 
+# AI engine for rewriting summaries
 try:
     from ai import engine
 except ImportError:
-    engine = None
+    engine = None  # allow script to work even if ai module isn't available
 
-RSS_URL = "https://news.google.com/rss"
-KEYWORDS = [
-    "iPhone", "Nvidia", "Apple", "Microsoft", "Google", "AI", "OpenAI",
-    "ChatGPT", "Meta", "Amazon", "Tesla", "Bitcoin", "Crypto", "Tech",
-    "Software", "Business", "News",
+# ── Configuration ───────────────────────────────────────────────
+
+# Football-focused RSS queries via Google News
+FOOTBALL_RSS_FEEDS = [
+    "https://news.google.com/rss/search?q=premier+league&hl=en-GB&gl=GB&ceid=GB:en",
+    "https://news.google.com/rss/search?q=football+transfer&hl=en-GB&gl=GB&ceid=GB:en",
+    "https://news.google.com/rss/search?q=champions+league&hl=en-GB&gl=GB&ceid=GB:en",
+    "https://news.google.com/rss/search?q=la+liga&hl=en-GB&gl=GB&ceid=GB:en",
+    "https://news.google.com/rss/search?q=bundesliga&hl=en-GB&gl=GB&ceid=GB:en",
+    "https://news.google.com/rss/search?q=football+injury+news&hl=en-GB&gl=GB&ceid=GB:en",
 ]
 
+# Keywords that must appear for an entry to be accepted
+FOOTBALL_KEYWORDS = [
+    "football", "soccer", "premier league", "la liga", "bundesliga",
+    "serie a", "champions league", "transfer", "haaland", "mbapp",
+    "bellingham", "salah", "kane", "messi", "ronaldo", "arsenal",
+    "chelsea", "liverpool", "manchester", "barcelona", "real madrid",
+    "juventus", "inter", "psg", "goal", "match", "fixture", "stadium",
+    "manager", "coach", "referee", "var", "offside",
+]
+
+# Trusted football news sources — prefer these for image scraping
+TRUSTED_SOURCES = [
+    "bbc.co.uk/sport", "skysports.com", "theguardian.com/football",
+    "espn.com/soccer", "goal.com", "marca.com", "sport.es",
+]
+
+# Pixabay API — server-side only, never exposed to browser
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY")
+PIXABAY_BASE    = "https://pixabay.com/api/"
+
+# Supabase connection (expects environment variables)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-# ── Get your free Pixabay key at https://pixabay.com/api/docs/ ──
-PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "")
 
 client: Client | None = None
 
@@ -42,82 +76,102 @@ def get_supabase_client() -> Client:
     return client
 
 
-# ── Pixabay helper ───────────────────────────────────────────────
-def fetch_pixabay_image(query: str) -> Optional[str]:
-    """Return the first Pixabay photo URL for *query*, or None.
-    No attribution required — Pixabay license allows free commercial use.
-    """
-    if not PIXABAY_API_KEY:
-        return None
-    try:
-        resp = requests.get(
-            "https://pixabay.com/api/",
-            params={
-                "key": PIXABAY_API_KEY,
-                "q": query,
-                "image_type": "photo",
-                "orientation": "horizontal",
-                "per_page": 3,
-                "safesearch": "true",
-                "order": "popular",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        hits = resp.json().get("hits", [])
-        if hits:
-            # webformatURL is ~640px wide — good balance of quality vs storage
-            return hits[0]["webformatURL"]
-    except Exception as e:
-        print(f"  Pixabay lookup failed: {e}")
-    return None
+# ── RSS feed helpers ────────────────────────────────────────────
 
-def fetch_article_image(url: str) -> Optional[str]:
-    """Extract the main image from the article page."""
-    try:
-        r = requests.get(url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0"
-        })
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        # 1️⃣ OpenGraph image
-        og = soup.find("meta", property="og:image")
-        if og and og.get("content"):
-            return og["content"]
-
-        # 2️⃣ Twitter fallback
-        twitter = soup.find("meta", attrs={"name": "twitter:image"})
-        if twitter and twitter.get("content"):
-            return twitter["content"]
-
-        # 3️⃣ First <img> fallback
-        img = soup.find("img")
-        if img and img.get("src"):
-            return img["src"]
-
-    except Exception as e:
-        print("Image scrape error:", e)
-
-    return None
-
-def fetch_feed(url: str = RSS_URL):
+def fetch_feed(url: str):
     return feedparser.parse(url)
 
 
 def filter_entries(entries, keywords: List[str]) -> List[dict]:
+    """Return entries whose title contains any of the football keywords."""
     filtered = []
     for entry in entries:
-        title = entry.get("title", "")
-        if any(kw.lower() in title.lower() for kw in keywords):
+        title = entry.get("title", "").lower()
+        if any(kw.lower() in title for kw in keywords):
             filtered.append(entry)
     return filtered
 
+
+# ── Image scraping ──────────────────────────────────────────────
+
+def scrape_og_image(url: str) -> Optional[str]:
+    """Attempt to scrape the og:image from the article's source page."""
+    try:
+        resp = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; NewsFlash/1.0)"
+        })
+        if resp.status_code != 200:
+            return None
+        soup = BeautifulSoup(resp.text, "html.parser")
+        og = soup.find("meta", property="og:image")
+        if og and og.get("content"):
+            return og["content"]
+        # Fallback to twitter:image
+        tw = soup.find("meta", attrs={"name": "twitter:image"})
+        if tw and tw.get("content"):
+            return tw["content"]
+    except Exception as e:
+        print(f"OG image scrape failed for {url}: {e}")
+    return None
+
+
+def fetch_pixabay_image(query: str) -> Optional[str]:
+    """
+    Server-side Pixabay search — NOT called from the browser.
+    Returns the web-format image URL or None.
+    """
+    if not PIXABAY_API_KEY:
+        return None
+    try:
+        params = {
+            "key": PIXABAY_API_KEY,
+            "q": f"football {query}",
+            "image_type": "photo",
+            "orientation": "horizontal",
+            "per_page": 5,
+            "safesearch": "true",
+        }
+        resp = requests.get(PIXABAY_BASE, params=params, timeout=8)
+        data = resp.json()
+        hits = data.get("hits", [])
+        if hits:
+            return hits[0].get("webformatURL")
+    except Exception as e:
+        print(f"Pixabay fetch failed for '{query}': {e}")
+    return None
+
+
+# ── Section auto-tagging ─────────────────────────────────────────
+
+SECTION_RULES = [
+    ("transfers",      r"transfer|deal|sign|bid|fee|contract|move|join|agree"),
+    ("breaking",       r"breaking|confirms|official|announce|sack|appoint|resign"),
+    ("investigations", r"scandal|corrupt|fraud|investigat|allegation|ban|sanction"),
+    ("gist",           r"viral|reaction|drama|locker|fan|funny|bizarre|social media"),
+    ("analysis",       r"analys|tactic|formation|performance|how|why|breakdown"),
+    ("history",        r"history|legend|greatest|classic|nostalgia|remember|career"),
+    ("players",        r"player|profile|journey|childhood|story|struggle|achieve"),
+]
+
+def detect_section(title: str, summary: str) -> str:
+    """Auto-tag article into a platform section based on content."""
+    text = (title + " " + summary).lower()
+    for section, pattern in SECTION_RULES:
+        if re.search(pattern, text):
+            return section
+    return "breaking"  # default to breaking news
+
+
+# ── DB helpers ──────────────────────────────────────────────────
+
+from postgrest import APIError
 
 def exists_in_db(url: str) -> bool:
     supa = get_supabase_client()
     try:
         resp = supa.table("articles").select("id").eq("source_url", url).limit(1).execute()
     except APIError as e:
+        # common case: table doesn't exist
         raise RuntimeError(
             "Database error when checking for existing article. "
             "Make sure the 'articles' table is created in Supabase. "
@@ -128,35 +182,23 @@ def exists_in_db(url: str) -> bool:
     return bool(getattr(resp, "data", None)) and len(resp.data) > 0
 
 
-def insert_article(entry: dict):
+def insert_article(entry: dict, image_url: Optional[str] = None, section: str = "breaking"):
     supa = get_supabase_client()
-
-    title = entry.get("title", "")
-    url = entry.get("link")
-
-# 1️⃣ Try getting the real article image
-    image_url = fetch_article_image(url)
-
-# 2️⃣ If no image found, use Pixabay
-    if not image_url:
-        pix_query = " ".join(title.split()[:4])
-        image_url = fetch_pixabay_image(pix_query)
-
-    if image_url:
-        print("  ✓ Image found")
-    else:
-        print("  ℹ No image found — frontend will generate AI preview")
     article = {
-        "title": title,
-        "source_url": entry.get("link"),
-        "published": entry.get("published"),
-        "summary": entry.get("summary"),
-        "headline": None,
-        "body": None,
-        "tags": [],
+        "title":       entry.get("title"),
+        "source_url":  entry.get("link"),
+        "published":   entry.get("published"),
+        "summary":     entry.get("summary"),
+        # image_url — scraped OG image or Pixabay result, used by frontend ArticleCard
+        "image_url":   image_url,
+        # section — maps to platform nav sections
+        "section":     section,
+        # enrichment fields filled later by AI engine
+        "headline":    None,
+        "body":        None,
+        "tags":        [],
         "meta_description": None,
-        "image_url": image_url,
-        "public": True,
+        "public":      True,
     }
     resp = supa.table("articles").insert(article).execute()
     if hasattr(resp, "error") and resp.error:
@@ -165,31 +207,65 @@ def insert_article(entry: dict):
 
 
 def main():
-    feed = fetch_feed()
-    entries = feed.entries
-    print(f"Fetched {len(entries)} entries from RSS")
-    matches = filter_entries(entries, KEYWORDS)
-    print(f"{len(matches)} entries match keywords")
+    all_entries: List[dict] = []
 
-    for entry in matches:
+    # Collect from all football RSS feeds
+    for feed_url in FOOTBALL_RSS_FEEDS:
+        feed = fetch_feed(feed_url)
+        print(f"Fetched {len(feed.entries)} entries from {feed_url}")
+        matches = filter_entries(feed.entries, FOOTBALL_KEYWORDS)
+        all_entries.extend(matches)
+
+    # Deduplicate by URL within this run
+    seen_urls = set()
+    unique_entries = []
+    for entry in all_entries:
         url = entry.get("link")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            unique_entries.append(entry)
+
+    print(f"{len(unique_entries)} unique football entries after deduplication")
+
+    for entry in unique_entries:
+        url = entry.get("link")
+        if not url:
+            continue
+
         if not exists_in_db(url):
-            print(f"Inserting {url}")
-            inserted = insert_article(entry)
+            print(f"Processing: {url}")
+
+            # Detect section from title + summary
+            section = detect_section(
+                entry.get("title", ""),
+                entry.get("summary", ""),
+            )
+
+            # Image strategy: OG scrape first, then Pixabay
+            image_url = scrape_og_image(url)
+            if not image_url and PIXABAY_API_KEY:
+                query = entry.get("title", "football")[:40]
+                image_url = fetch_pixabay_image(query)
+
+            print(f"  Section: {section} | Image: {'✓' if image_url else '✗'}")
+
+            inserted = insert_article(entry, image_url=image_url, section=section)
+
+            # AI enrichment (rewrite headline + body + tags)
             if inserted and engine:
                 article_id = inserted[0].get("id")
-                summary = entry.get("summary", "")
+                summary    = entry.get("summary", "")
                 try:
                     enriched = engine.rewrite_summary(summary, url)
                     if article_id:
                         supa = get_supabase_client()
-                        update_data = {}
+                        update_data: dict = {}
                         if enriched.get("headline"):
-                            update_data["headline"] = enriched["headline"]
+                            update_data["headline"]         = enriched["headline"]
                         if enriched.get("body"):
-                            update_data["body"] = enriched["body"]
+                            update_data["body"]             = enriched["body"]
                         if enriched.get("tags"):
-                            update_data["tags"] = enriched["tags"]
+                            update_data["tags"]             = enriched["tags"]
                         if enriched.get("meta"):
                             update_data["meta_description"] = enriched["meta"]
                         update_data["public"] = True
@@ -197,7 +273,7 @@ def main():
                 except Exception as e:
                     print(f"AI enrichment failed for {url}: {e}")
         else:
-            print(f"Skipping existing article {url}")
+            print(f"Skipping existing: {url}")
 
 
 if __name__ == "__main__":
