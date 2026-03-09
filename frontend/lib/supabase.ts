@@ -15,18 +15,9 @@ export interface Article {
   body?: string
   tags?: string[]
   meta_description?: string
-  /**
-   * image_url — saved by the scraper from the source's OG image / Pixabay.
-   * Frontend always prefers this over generated images. See lib/images.ts.
-   */
-  image_url?: string
-  /**
-   * section — maps to football platform nav sections:
-   * 'breaking' | 'transfers' | 'gist' | 'investigations' | 'analysis' | 'history' | 'players'
-   */
-  section?: string
-  /** source_name — e.g. "Sky Sports", "BBC Sport", "ESPN" */
-  source_name?: string
+  image_url?: string        // ← already added in rebuild
+  section?: string          // ← ADD THIS
+  source_name?: string      // ← already added in rebuild
   public: boolean
   created_at: string
   updated_at: string
