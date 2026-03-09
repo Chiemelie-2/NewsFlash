@@ -3,256 +3,494 @@
 /**
  * app/page.tsx
  * ─────────────────────────────────────────────────────────
- * Football platform homepage.
+ * Football platform homepage — NewsNow-style mobile layout.
  *
- * Layout:
- *  1. Header (sticky)
- *  2. Live scores banner
- *  3. Hero feature — top article full-width
- *  4. Two-column layout:
- *     LEFT:  SearchBar + CategoryFilter + Article grid + Load more
- *     RIGHT: Fan Polls, Did You Know?, Transfer CTA, Player CTA
+ * Layout (matches reference screenshots):
+ *  1. Top bar — brand logo + city selector + action icons
+ *  2. Trending topics strip — hashtag bubbles with fire badge + count
+ *  3. Section tabs — For You, Breaking, Transfers, Analysis, Gist, History
+ *  4. Hero carousel — full-width image cards with overlay headline,
+ *                     source logo + timestamp, dot pagination
+ *  5. Article list — two-column thumbnail grid below carousel
+ *  6. Bottom nav — Home, Football, Live, Me
  * ─────────────────────────────────────────────────────────
  */
 
-import { useState, useEffect } from 'react'
-import Header from '@/components/Header'
-import ArticleCard from '@/components/ArticleCard'
-import CategoryFilter from '@/components/CategoryFilter'
-import SearchBar from '@/components/SearchBar'
-import LiveScoresBanner from '@/components/LiveScoresBanner'
-import FanPolls from '@/components/FanPolls'
-import DidYouKnow from '@/components/DidYouKnow'
+import { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { getArticles, Article } from '@/lib/supabase'
 import { fetchArticleImage } from '@/lib/images'
-import { Clock, ChevronDown, ArrowRight } from 'lucide-react'
-import Link from 'next/link'
+import { Search, Download, Bell, Home, Activity, Play, User, Flame, ChevronRight, Clock } from 'lucide-react'
+import LiveScoresBanner from '@/components/LiveScoresBanner'
 
-const PAGE_SIZE = 18
+// ── Trending topics ───────────────────────────────────────────────
+const TOPICS = [
+  { label: 'See All\nTopics', icon: '⊞', count: null },
+  { label: '#Premier\nLeague',  count: 2341 },
+  { label: '#Transfer\nNews',   count: 1890 },
+  { label: '#Champions\nLeague',count: 1247 },
+  { label: '#Haaland',          count: 987  },
+  { label: '#Mbappé',           count: 853  },
+  { label: '#Arsenal',          count: 743  },
+]
+
+// ── Section tabs ──────────────────────────────────────────────────
+const TABS = [
+  { id: '',               label: 'For You'   },
+  { id: 'breaking',       label: 'Breaking'  },
+  { id: 'transfers',      label: 'Transfers' },
+  { id: 'analysis',       label: 'Analysis'  },
+  { id: 'gist',           label: 'Gist'      },
+  { id: 'history',        label: 'History'   },
+  { id: 'players',        label: 'Players'   },
+]
+
+// ── Time ago helper ───────────────────────────────────────────────
+function timeAgo(d: string) {
+  const s = Math.floor((Date.now() - new Date(d).getTime()) / 1000)
+  if (s < 60)    return 'Just now'
+  if (s < 3600)  return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}
 
 export default function Home() {
-  const [articles, setArticles]             = useState<Article[]>([])
-  const [loading, setLoading]               = useState(true)
-  const [loadingMore, setLoadingMore]       = useState(false)
-  const [selectedCategory, setSelectedCategory] = useState<string>('')
-  const [searchQuery, setSearchQuery]       = useState<string>('')
-  const [offset, setOffset]                 = useState(0)
-  const [hasMore, setHasMore]               = useState(true)
+  const [articles, setArticles]     = useState<Article[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [activeTab, setActiveTab]   = useState('')
+  const [carouselIdx, setCarouselIdx] = useState(0)
+  const [navActive, setNavActive]   = useState('home')
+  const carouselRef = useRef<HTMLDivElement>(null)
 
-  // ── Initial fetch ─────────────────────────────────────────────
+  // ── Fetch articles ────────────────────────────────────────────
   useEffect(() => {
-    const fetchArticles = async () => {
-      setLoading(true)
-      try {
-        const data = await getArticles(PAGE_SIZE, 0)
-        setArticles(data)
-        setHasMore(data.length === PAGE_SIZE)
-        setOffset(PAGE_SIZE)
-      } catch (error) {
-        console.error('Failed to fetch articles:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchArticles()
+    setLoading(true)
+    getArticles(30, 0).then(data => {
+      setArticles(data)
+      setLoading(false)
+    })
   }, [])
 
-  // ── Load more ────────────────────────────────────────────────
-  const loadMore = async () => {
-    setLoadingMore(true)
-    try {
-      const data = await getArticles(PAGE_SIZE, offset)
-      setArticles(prev => [...prev, ...data])
-      setHasMore(data.length === PAGE_SIZE)
-      setOffset(prev => prev + PAGE_SIZE)
-    } catch (error) {
-      console.error('Failed to load more:', error)
-    } finally {
-      setLoadingMore(false)
-    }
-  }
+  // ── Auto-advance carousel every 5s ───────────────────────────
+  useEffect(() => {
+    if (heroArticles.length < 2) return
+    const t = setInterval(() => {
+      setCarouselIdx(i => (i + 1) % Math.min(heroArticles.length, 5))
+    }, 5000)
+    return () => clearInterval(t)
+  }, [articles, activeTab])
 
-  // ── Filter logic — same as original ──────────────────────────
-  const filteredArticles = articles.filter(a => {
-    const matchesCategory = !selectedCategory ||
-      a.tags?.includes(selectedCategory) ||
-      a.section === selectedCategory
-    const matchesSearch = !searchQuery ||
-      a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.headline?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.body?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      a.summary.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchesCategory && matchesSearch
-  })
+  // ── Filter by tab ─────────────────────────────────────────────
+  const filtered = articles.filter(a =>
+    !activeTab || a.section === activeTab || a.tags?.includes(activeTab)
+  )
 
-  // ── Hero = first article ──────────────────────────────────────
-  const [heroArticle, ...gridArticles] = filteredArticles
-  const heroImage = heroArticle
-    ? heroArticle.image_url
-      ? { src: heroArticle.image_url, alt: heroArticle.headline || heroArticle.title, source: 'db' as const }
-      : fetchArticleImage(heroArticle.tags || [], heroArticle.headline || heroArticle.title)
+  const heroArticles = filtered.slice(0, 5)
+  const listArticles = filtered.slice(5, 25)
+
+  const currentHero = heroArticles[carouselIdx]
+  const heroImg = currentHero
+    ? currentHero.image_url
+      ? { src: currentHero.image_url, alt: currentHero.headline || currentHero.title }
+      : fetchArticleImage(currentHero.tags || [], currentHero.headline || currentHero.title)
     : null
 
   return (
-    <main style={{ minHeight: '100vh', background: 'var(--pitch-black)' }}>
-      <Header />
-      <LiveScoresBanner />
+    <div style={{
+      maxWidth: '430px',
+      margin: '0 auto',
+      minHeight: '100vh',
+      background: '#f5f5f5',
+      fontFamily: "'Barlow Condensed', sans-serif",
+      position: 'relative',
+      overflowX: 'hidden',
+    }}>
 
-      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 16px' }}>
-
-        {/* ── Hero Feature Article ───────────────────────────── */}
-        {!loading && heroArticle && heroImage && (
-          <Link href={`/article/${heroArticle.id}`} style={{ textDecoration:'none', display:'block' }}>
-            <div className="card-hover" style={{ position:'relative', width:'100%', height:'clamp(280px, 45vw, 520px)', borderRadius:'10px', overflow:'hidden', margin:'24px 0', cursor:'pointer' }}>
-              <img src={heroImage.src} alt={heroImage.alt} style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }} />
-              <div style={{ position:'absolute', inset:0, background:'linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 50%, transparent 100%)' }} />
-              <div style={{ position:'absolute', bottom:0, left:0, right:0, padding:'clamp(16px,3vw,40px)' }}>
-                {heroArticle.section && (
-                  <span style={{ display:'inline-block', background:'var(--green-spark)', color:'#000', fontFamily:'var(--font-mono)', fontSize:'10px', fontWeight:700, letterSpacing:'0.12em', textTransform:'uppercase', padding:'3px 10px', borderRadius:'2px', marginBottom:'12px' }}>
-                    {heroArticle.section}
-                  </span>
-                )}
-                <h1 style={{ fontFamily:'var(--font-display)', fontSize:'clamp(22px, 4vw, 48px)', fontWeight:900, letterSpacing:'-0.01em', textTransform:'uppercase', color:'white', lineHeight:1.05, marginBottom:'10px', maxWidth:'800px', textShadow:'0 2px 8px rgba(0,0,0,0.5)' }}>
-                  {heroArticle.headline || heroArticle.title}
-                </h1>
-                <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
-                  <Clock size={12} style={{ color:'rgba(255,255,255,0.6)' }} />
-                  <time style={{ fontFamily:'var(--font-mono)', fontSize:'11px', color:'rgba(255,255,255,0.6)', letterSpacing:'0.05em' }}>
-                    {new Date(heroArticle.published || heroArticle.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })}
-                  </time>
-                  {heroArticle.source_name && (
-                    <span style={{ fontFamily:'var(--font-mono)', fontSize:'11px', color:'var(--green-spark)', letterSpacing:'0.05em' }}>{heroArticle.source_name}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </Link>
-        )}
-
-        {/* ── Two-column: main + sidebar ────────────────────── */}
-        <div className="home-grid">
-
-          {/* ── Main column ────────────────────────────────── */}
-          <div>
-            <SearchBar value={searchQuery} onChange={setSearchQuery} />
-            <CategoryFilter selected={selectedCategory} onChange={setSelectedCategory} />
-
-            <div style={{ marginBottom:'20px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-              <span className="section-label">
-                {selectedCategory ? selectedCategory.toUpperCase() : searchQuery ? `RESULTS FOR "${searchQuery.toUpperCase()}"` : 'LATEST FOOTBALL NEWS'}
-              </span>
-              {filteredArticles.length > 0 && (
-                <span style={{ fontFamily:'var(--font-mono)', fontSize:'11px', color:'var(--text-muted)', letterSpacing:'0.06em' }}>
-                  {filteredArticles.length} articles
-                </span>
-              )}
-            </div>
-
-            {loading ? (
-              <div className="articles-grid">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} style={{ background:'var(--pitch-mid)', border:'1px solid var(--pitch-border)', borderRadius:'8px', overflow:'hidden' }}>
-                    <div style={{ height:'200px', background:'var(--pitch-surface)', animation:'shimmer 1.5s infinite', backgroundSize:'200% 100%' }} />
-                    <div style={{ padding:'16px', display:'flex', flexDirection:'column', gap:'10px' }}>
-                      {[90,70,80].map((w,j) => <div key={j} style={{ height:'13px', background:'var(--pitch-surface)', borderRadius:'3px', width:`${w}%`, animation:'shimmer 1.5s infinite', backgroundSize:'200% 100%' }} />)}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : gridArticles.length === 0 && !heroArticle ? (
-              <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'280px', gap:'12px' }}>
-                <span style={{ fontSize:'48px' }}>⚽</span>
-                <p style={{ fontFamily:'var(--font-display)', fontSize:'20px', fontWeight:700, letterSpacing:'0.05em', color:'var(--text-muted)', textTransform:'uppercase' }}>No articles found</p>
-                {searchQuery && <button onClick={() => setSearchQuery('')} style={{ fontFamily:'var(--font-mono)', fontSize:'11px', fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', background:'none', border:'1px solid var(--pitch-border)', color:'var(--green-spark)', cursor:'pointer', padding:'8px 16px', borderRadius:'4px' }}>Clear search</button>}
-              </div>
-            ) : (
-              <>
-                <div className="articles-grid" style={{ marginBottom:'32px' }}>
-                  {gridArticles.map((article, i) => (
-                    <div key={article.id} style={{ animationDelay:`${(i % 6) * 60}ms` }}>
-                      <ArticleCard article={article} />
-                    </div>
-                  ))}
-                </div>
-                {hasMore && !searchQuery && !selectedCategory && (
-                  <div style={{ display:'flex', justifyContent:'center', paddingBottom:'48px' }}>
-                    <button onClick={loadMore} disabled={loadingMore} style={{ display:'inline-flex', alignItems:'center', gap:'8px', fontFamily:'var(--font-display)', fontSize:'15px', fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', padding:'12px 32px', borderRadius:'6px', border:'1px solid var(--pitch-border)', background: loadingMore ? 'var(--pitch-surface)' : 'var(--pitch-mid)', color: loadingMore ? 'var(--text-muted)' : 'var(--text-primary)', cursor: loadingMore ? 'not-allowed' : 'pointer', transition:'all 0.15s ease' }}>
-                      {loadingMore ? 'Loading…' : <><ChevronDown size={16} /> Load more</>}
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
+      {/* ── Top bar ────────────────────────────────────────────── */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        background: 'white',
+        borderBottom: '1px solid #eee',
+        padding: '10px 14px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        {/* Brand + city */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{
+            width: '28px', height: '28px', borderRadius: '6px',
+            background: '#e60000', display: 'flex', alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <span style={{ color: 'white', fontWeight: 900, fontSize: '14px', fontFamily: 'Georgia, serif', fontStyle: 'italic' }}>N</span>
           </div>
+          <button style={{
+            display: 'flex', alignItems: 'center', gap: '4px',
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: '16px', fontWeight: 700, color: '#111',
+          }}>
+            Set Your City
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+        </div>
 
-          {/* ── Sidebar ─────────────────────────────────────── */}
-          <aside className="home-sidebar">
-            <FanPolls />
-            <DidYouKnow />
-
-            {/* Transfer CTA */}
-            <Link href="/transfers" style={{ textDecoration:'none' }}>
-              <div className="card-hover" style={{ background:'var(--pitch-mid)', border:'1px solid rgba(56,189,248,0.25)', borderRadius:'10px', padding:'18px', cursor:'pointer' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
-                  <span style={{ fontFamily:'var(--font-mono)', fontSize:'9px', fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:'var(--sky-live)' }}>Transfer Centre</span>
-                  <ArrowRight size={14} style={{ color:'var(--sky-live)' }} />
-                </div>
-                <p style={{ fontFamily:'var(--font-display)', fontSize:'16px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.02em', color:'var(--text-primary)', lineHeight:1.2 }}>Latest Rumors &amp; Confirmed Deals</p>
-                <p style={{ fontFamily:'var(--font-body)', fontSize:'12px', color:'var(--text-muted)', marginTop:'6px' }}>Track every transfer with the Rumor Reliability Meter →</p>
-              </div>
-            </Link>
-
-            {/* Player comparison CTA */}
-            <Link href="/players" style={{ textDecoration:'none' }}>
-              <div className="card-hover" style={{ background:'var(--pitch-mid)', border:'1px solid rgba(0,255,135,0.2)', borderRadius:'10px', padding:'18px', cursor:'pointer' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'8px' }}>
-                  <span style={{ fontFamily:'var(--font-mono)', fontSize:'9px', fontWeight:700, letterSpacing:'0.15em', textTransform:'uppercase', color:'var(--green-spark)' }}>Player Hub</span>
-                  <ArrowRight size={14} style={{ color:'var(--green-spark)' }} />
-                </div>
-                <p style={{ fontFamily:'var(--font-display)', fontSize:'16px', fontWeight:800, textTransform:'uppercase', letterSpacing:'0.02em', color:'var(--text-primary)', lineHeight:1.2 }}>Compare Players</p>
-                <p style={{ fontFamily:'var(--font-body)', fontSize:'12px', color:'var(--text-muted)', marginTop:'6px' }}>Messi vs Ronaldo, Haaland vs Mbappé — head-to-head stats →</p>
-              </div>
-            </Link>
-          </aside>
+        {/* Icons */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <Download size={20} color="#333" />
+          <Search size={20} color="#333" />
+          {/* MiniPay badge */}
+          <div style={{
+            width: '32px', height: '32px', borderRadius: '50%',
+            background: 'linear-gradient(135deg, #00b09b, #96c93d)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '9px', fontWeight: 800, color: 'white', letterSpacing: '-0.02em',
+          }}>
+            Mini
+          </div>
         </div>
       </div>
 
-      <style>{`
-        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+      {/* ── Live Scores Banner ─────────────────────────────────── */}
+      <LiveScoresBanner />
 
-        /* Two-column layout on desktop */
-        .home-grid {
-          display: grid;
-          grid-template-columns: 1fr 340px;
-          gap: 32px;
-          align-items: start;
+      {/* ── Trending topics strip ─────────────────────────────── */}
+      <div style={{
+        background: 'white',
+        borderBottom: '1px solid #eee',
+        padding: '10px 0',
+      }}>
+        <div style={{
+          display: 'flex', gap: '10px', overflowX: 'auto',
+          padding: '0 14px', scrollbarWidth: 'none',
+        }}>
+          {TOPICS.map((topic, i) => (
+            <div key={i} style={{
+              flexShrink: 0, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', gap: '5px', cursor: 'pointer',
+            }}>
+              {/* Circle avatar */}
+              <div style={{ position: 'relative' }}>
+                <div style={{
+                  width: '56px', height: '56px', borderRadius: '50%',
+                  background: i === 0
+                    ? '#f0f0f0'
+                    : `hsl(${i * 47}, 65%, 55%)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  border: '2px solid white',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                  overflow: 'hidden',
+                }}>
+                  {i === 0
+                    ? <span style={{ fontSize: '20px', color: '#555' }}>⊞</span>
+                    : <span style={{ fontSize: '11px', fontWeight: 800, color: 'white', textAlign: 'center', lineHeight: 1.2, padding: '4px' }}>
+                        {topic.label.replace('#', '').split('\n')[0]}
+                      </span>
+                  }
+                </div>
+                {/* Fire badge + count */}
+                {topic.count && (
+                  <div style={{
+                    position: 'absolute', bottom: '-2px', left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: '#7c3aed',
+                    borderRadius: '10px', padding: '1px 6px',
+                    display: 'flex', alignItems: 'center', gap: '2px',
+                    border: '1.5px solid white',
+                    minWidth: '36px', justifyContent: 'center',
+                  }}>
+                    <Flame size={8} color="white" fill="white" />
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '9px', fontWeight: 700, color: 'white' }}>
+                      {topic.count >= 1000 ? `${(topic.count/1000).toFixed(1)}k` : topic.count}
+                    </span>
+                  </div>
+                )}
+              </div>
+              {/* Label */}
+              <span style={{
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontSize: '10px', fontWeight: 600, color: '#333',
+                textAlign: 'center', lineHeight: 1.2,
+                whiteSpace: 'pre-line',
+              }}>
+                {topic.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Section tabs ──────────────────────────────────────── */}
+      <div style={{
+        background: 'white',
+        borderBottom: '2px solid #eee',
+        position: 'sticky', top: '53px', zIndex: 40,
+      }}>
+        <div style={{
+          display: 'flex', overflowX: 'auto',
+          padding: '0 14px', gap: '0', scrollbarWidth: 'none',
+        }}>
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => { setActiveTab(tab.id); setCarouselIdx(0) }}
+              style={{
+                flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer',
+                padding: '10px 14px',
+                fontFamily: "'Barlow Condensed', sans-serif",
+                fontSize: '14px', fontWeight: activeTab === tab.id ? 700 : 500,
+                color: activeTab === tab.id ? '#e60000' : '#555',
+                borderBottom: activeTab === tab.id ? '2.5px solid #e60000' : '2.5px solid transparent',
+                marginBottom: '-2px',
+                transition: 'all 0.15s',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {tab.id === '' && <span style={{ marginRight: '4px', fontSize: '12px' }}>✏️</span>}
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Hero Carousel ──────────────────────────────────────── */}
+      <div style={{ background: 'white', paddingBottom: '12px' }}>
+
+        {loading ? (
+          <div style={{
+            height: '240px', background: '#eee',
+            animation: 'shimmer 1.5s infinite', backgroundSize: '200% 100%',
+          }} />
+        ) : currentHero && heroImg ? (
+          <>
+            <Link href={`/article/${currentHero.id}`} style={{ textDecoration: 'none', display: 'block' }}>
+              <div style={{ position: 'relative', height: '240px', overflow: 'hidden' }}>
+                <img
+                  src={heroImg.src}
+                  alt={heroImg.alt}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                />
+                {/* Dark overlay */}
+                <div style={{
+                  position: 'absolute', inset: 0,
+                  background: 'linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.2) 55%, transparent 100%)',
+                }} />
+
+                {/* Source + time — top left */}
+                <div style={{
+                  position: 'absolute', bottom: '44px', left: '12px',
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                }}>
+                  <div style={{
+                    width: '18px', height: '18px', borderRadius: '3px',
+                    background: '#e60000',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0,
+                  }}>
+                    <span style={{ color: 'white', fontSize: '8px', fontWeight: 900, fontStyle: 'italic' }}>S</span>
+                  </div>
+                  <span style={{
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontSize: '11px', fontWeight: 600, color: 'rgba(255,255,255,0.85)',
+                  }}>
+                    {currentHero.source_name || 'NewsFlash'} · {timeAgo(currentHero.published || currentHero.created_at)}
+                  </span>
+                </div>
+
+                {/* Headline */}
+                <div style={{
+                  position: 'absolute', bottom: '12px', left: '12px', right: '12px',
+                }}>
+                  <p style={{
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontSize: '18px', fontWeight: 800, lineHeight: 1.15,
+                    color: 'white', textTransform: 'uppercase', letterSpacing: '0.01em',
+                    textShadow: '0 1px 4px rgba(0,0,0,0.5)',
+                  }}>
+                    {currentHero.headline || currentHero.title}
+                  </p>
+                </div>
+              </div>
+            </Link>
+
+            {/* Dot pagination */}
+            <div style={{
+              display: 'flex', justifyContent: 'center', gap: '5px',
+              padding: '8px 0 4px',
+            }}>
+              {heroArticles.map((_, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCarouselIdx(i)}
+                  style={{
+                    width: i === carouselIdx ? '18px' : '6px',
+                    height: '6px', borderRadius: '3px', border: 'none', cursor: 'pointer', padding: 0,
+                    background: i === carouselIdx ? '#e60000' : '#ccc',
+                    transition: 'all 0.3s ease',
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      {/* ── Headlines section ──────────────────────────────────── */}
+      <div style={{ padding: '14px 14px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+          <h2 style={{
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: '22px', fontWeight: 900, color: '#111',
+            letterSpacing: '-0.01em', textTransform: 'uppercase',
+          }}>
+            Headlines
+          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '16px' }}>🌤️</span>
+            <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '11px', color: '#888' }}>--°C</span>
+            <button style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: '12px', fontWeight: 700, color: '#e60000',
+              background: 'none', border: 'none', cursor: 'pointer',
+            }}>
+              Set Weather
+            </button>
+          </div>
+        </div>
+
+        {/* Article list */}
+        {loading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} style={{
+                height: '90px', borderRadius: '8px', background: '#eee',
+                animation: 'shimmer 1.5s infinite', backgroundSize: '200% 100%',
+              }} />
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+            {listArticles.map((article, i) => {
+              const img = article.image_url
+                ? { src: article.image_url, alt: article.headline || article.title }
+                : fetchArticleImage(article.tags || [], article.headline || article.title)
+
+              return (
+                <Link key={article.id} href={`/article/${article.id}`} style={{ textDecoration: 'none' }}>
+                  <div
+                    style={{
+                      display: 'flex', gap: '10px', alignItems: 'flex-start',
+                      padding: '10px 0',
+                      borderBottom: '1px solid #eee',
+                      background: 'white',
+                      paddingLeft: '0', paddingRight: '0',
+                    }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#fafafa'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'white'}
+                  >
+                    {/* Thumbnail */}
+                    <div style={{
+                      flexShrink: 0, width: '90px', height: '68px',
+                      borderRadius: '6px', overflow: 'hidden',
+                      background: '#eee',
+                    }}>
+                      <img
+                        src={img.src}
+                        alt={img.alt}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    </div>
+
+                    {/* Text */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {/* Source + time */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px' }}>
+                        <div style={{
+                          width: '14px', height: '14px', borderRadius: '2px',
+                          background: '#e60000', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                        }}>
+                          <span style={{ color: 'white', fontSize: '7px', fontWeight: 900, fontStyle: 'italic' }}>N</span>
+                        </div>
+                        <span style={{
+                          fontFamily: "'Barlow Condensed', sans-serif",
+                          fontSize: '11px', color: '#888', fontWeight: 600,
+                        }}>
+                          {article.source_name || 'NewsFlash'} · {timeAgo(article.published || article.created_at)}
+                        </span>
+                      </div>
+
+                      {/* Headline */}
+                      <p style={{
+                        fontFamily: "'Barlow Condensed', sans-serif",
+                        fontSize: '15px', fontWeight: 700, lineHeight: 1.25,
+                        color: '#111', textTransform: 'uppercase',
+                        display: '-webkit-box',
+                        WebkitLineClamp: 3,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                        margin: 0,
+                      }}>
+                        {article.headline || article.title}
+                      </p>
+                    </div>
+                  </div>
+                </Link>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom padding for nav */}
+      <div style={{ height: '72px' }} />
+
+      {/* ── Bottom nav ────────────────────────────────────────── */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)',
+        width: '100%', maxWidth: '430px',
+        background: 'white',
+        borderTop: '1px solid #eee',
+        display: 'flex',
+        zIndex: 50,
+        boxShadow: '0 -2px 12px rgba(0,0,0,0.08)',
+      }}>
+        {[
+          { id: 'home',     icon: <Home size={22} />,     label: 'Home',     href: '/'            },
+          { id: 'football', icon: <span style={{ fontSize: '22px' }}>⚽</span>, label: 'Football', href: '/live-scores' },
+          { id: 'video',    icon: <Play size={22} />,     label: 'Video',    href: '#'            },
+          { id: 'me',       icon: <User size={22} />,     label: 'Me',       href: '#'            },
+        ].map(item => (
+          <Link
+            key={item.id}
+            href={item.href}
+            onClick={() => setNavActive(item.id)}
+            style={{
+              flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+              padding: '10px 0 8px', textDecoration: 'none', gap: '3px',
+              color: navActive === item.id ? '#e60000' : '#888',
+              borderTop: navActive === item.id ? '2px solid #e60000' : '2px solid transparent',
+              transition: 'color 0.15s',
+            }}
+          >
+            {item.icon}
+            <span style={{
+              fontFamily: "'Barlow Condensed', sans-serif",
+              fontSize: '11px', fontWeight: 600, letterSpacing: '0.03em',
+            }}>
+              {item.label}
+            </span>
+          </Link>
+        ))}
+      </div>
+
+      <style>{`
+        @keyframes shimmer {
+          0%   { background-position: -200% 0; }
+          100% { background-position:  200% 0; }
         }
-        .home-sidebar {
-          position: sticky;
-          top: 76px;
-          display: flex;
-          flex-direction: column;
-          gap: 24px;
-        }
-        /* Article card grid */
-        .articles-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 20px;
-        }
-        /* Tablet: collapse sidebar, 2-col article grid */
-        @media (max-width: 1024px) {
-          .home-grid { grid-template-columns: 1fr !important; }
-          .home-sidebar { position: static !important; flex-direction: row !important; flex-wrap: wrap !important; }
-          .home-sidebar > * { flex: 1 1 280px; }
-          .articles-grid { grid-template-columns: repeat(2, 1fr) !important; }
-        }
-        /* Mobile: single column */
-        @media (max-width: 640px) {
-          .home-sidebar { flex-direction: column !important; }
-          .articles-grid { grid-template-columns: 1fr !important; }
-        }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { display: none; }
+        body { margin: 0; }
       `}</style>
-    </main>
+    </div>
   )
 }

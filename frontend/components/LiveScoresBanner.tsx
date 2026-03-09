@@ -3,186 +3,375 @@
 /**
  * components/LiveScoresBanner.tsx
  * ─────────────────────────────────────────────────────────
- * Horizontal scrollable live scores strip for the homepage.
- * Data comes from /api/scores (or a direct football API).
- * Falls back to placeholder UI while loading.
- *
- * Supported leagues: EPL, La Liga, Bundesliga, Serie A, UCL
- * API: football-data.org (free tier) or API-Football
- * ─────────────────────────────────────────────────────────
+ * Horizontally scrolling live scores banner.
+ * Fetches from /api/scores every 60 seconds.
+ * Shows LIVE matches first, then upcoming (NS), then FT.
  */
 
 import { useState, useEffect } from 'react'
 
-interface MatchScore {
-  id: string
+interface Match {
+  id: number
   homeTeam: string
   awayTeam: string
   homeScore: number | null
   awayScore: number | null
-  status: 'LIVE' | 'FT' | 'HT' | 'NS' | string
-  minute?: number
+  status: string        // 'LIVE' | 'HT' | 'FT' | 'NS' | ...
+  minute: number | null
   competition: string
-  kickoff?: string
+  competitionLogo?: string
+  homeLogo?: string
+  awayLogo?: string
+  kickoff: string
 }
 
-// ── Placeholder matches shown before real data loads ──────────────
-const PLACEHOLDER_MATCHES: MatchScore[] = [
-  { id: '1', homeTeam: 'Arsenal',   awayTeam: 'Chelsea',    homeScore: 2, awayScore: 1, status: 'LIVE', minute: 67, competition: 'EPL' },
-  { id: '2', homeTeam: 'Barcelona', awayTeam: 'Real Madrid', homeScore: 1, awayScore: 1, status: 'HT',  competition: 'La Liga' },
-  { id: '3', homeTeam: 'Bayern',    awayTeam: 'Dortmund',    homeScore: null, awayScore: null, status: 'NS', kickoff: '20:45', competition: 'Bundesliga' },
-  { id: '4', homeTeam: 'Juventus',  awayTeam: 'Inter',       homeScore: 0, awayScore: 2, status: 'FT',  competition: 'Serie A' },
-  { id: '5', homeTeam: 'Liverpool', awayTeam: 'PSG',         homeScore: 3, awayScore: 1, status: 'FT',  competition: 'UCL' },
-]
+// Shorten long team names for the compact banner
+function shortName(name: string): string {
+  const overrides: Record<string, string> = {
+    'Manchester City':    'Man City',
+    'Manchester United':  'Man Utd',
+    'Tottenham Hotspur':  'Spurs',
+    'Newcastle United':   'Newcastle',
+    'Nottingham Forest':  "Nott'm Forest",
+    'West Ham United':    'West Ham',
+    'Wolverhampton Wanderers': 'Wolves',
+    'Brighton & Hove Albion': 'Brighton',
+    'Atletico Madrid':    'Atlético',
+    'Real Madrid':        'Real Madrid',
+    'Paris Saint Germain': 'PSG',
+    'Paris Saint-Germain': 'PSG',
+    'Borussia Dortmund':  'Dortmund',
+    'RB Leipzig':         'Leipzig',
+    'Bayer Leverkusen':   'Leverkusen',
+    'Internazionale':     'Inter',
+    'AC Milan':           'Milan',
+    'Juventus':           'Juventus',
+  }
+  return overrides[name] ?? (name.length > 12 ? name.slice(0, 11) + '…' : name)
+}
 
-function StatusBadge({ status, minute }: { status: string; minute?: number }) {
+function StatusBadge({ status, minute }: { status: string; minute: number | null }) {
+  const isLive = status === 'LIVE' || status === 'HT'
+
   if (status === 'LIVE') {
     return (
-      <span className="badge-live">
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: '3px',
+        background: '#e60000', color: 'white',
+        fontSize: '8px', fontWeight: 800, padding: '1px 5px',
+        borderRadius: '4px', letterSpacing: '0.04em',
+        fontFamily: "'Barlow Condensed', sans-serif",
+      }}>
+        <span style={{
+          width: '5px', height: '5px', borderRadius: '50%',
+          background: 'white', flexShrink: 0,
+          animation: 'livePulse 1s infinite',
+        }} />
         {minute ? `${minute}'` : 'LIVE'}
       </span>
     )
   }
+
   if (status === 'HT') {
     return (
       <span style={{
-        fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
-        letterSpacing: '0.1em', padding: '2px 6px', borderRadius: '2px',
-        background: 'var(--amber-boost)', color: '#000',
-      }}>HT</span>
+        display: 'inline-flex', alignItems: 'center',
+        background: '#ff7a00', color: 'white',
+        fontSize: '8px', fontWeight: 800, padding: '1px 5px',
+        borderRadius: '4px', letterSpacing: '0.04em',
+        fontFamily: "'Barlow Condensed', sans-serif",
+      }}>
+        HT
+      </span>
     )
   }
+
   if (status === 'FT') {
     return (
       <span style={{
-        fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
-        letterSpacing: '0.1em', color: 'var(--text-muted)',
-      }}>FT</span>
+        display: 'inline-flex', alignItems: 'center',
+        background: '#555', color: 'white',
+        fontSize: '8px', fontWeight: 700, padding: '1px 5px',
+        borderRadius: '4px', letterSpacing: '0.04em',
+        fontFamily: "'Barlow Condensed', sans-serif",
+      }}>
+        FT
+      </span>
     )
   }
-  // Not started — show kickoff time
+
+  // NS — show kickoff time
   return (
     <span style={{
-      fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
-      color: 'var(--text-muted)', letterSpacing: '0.04em',
+      display: 'inline-flex', alignItems: 'center',
+      background: '#eee', color: '#555',
+      fontSize: '8px', fontWeight: 700, padding: '1px 5px',
+      borderRadius: '4px', letterSpacing: '0.03em',
+      fontFamily: "'JetBrains Mono', monospace",
     }}>
-      {status === 'NS' ? '' : status}
+      NS
     </span>
   )
 }
 
-function MatchCard({ match }: { match: MatchScore }) {
-  const isLive = match.status === 'LIVE'
-  const hasScore = match.homeScore !== null && match.awayScore !== null
-
-  return (
-    <div
-      style={{
-        flexShrink: 0,
-        background: isLive ? 'rgba(0,255,135,0.05)' : 'var(--pitch-surface)',
-        border: `1px solid ${isLive ? 'rgba(0,255,135,0.3)' : 'var(--pitch-border)'}`,
-        borderRadius: '6px',
-        padding: '10px 14px',
-        minWidth: '160px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-      }}
-    >
-      {/* Competition + status */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{
-          fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
-          color: 'var(--text-muted)', letterSpacing: '0.08em', textTransform: 'uppercase',
-        }}>
-          {match.competition}
-        </span>
-        <StatusBadge status={match.status} minute={match.minute} />
-      </div>
-
-      {/* Teams + scores */}
-      {[
-        { team: match.homeTeam, score: match.homeScore },
-        { team: match.awayTeam, score: match.awayScore },
-      ].map(({ team, score }) => (
-        <div key={team} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-          <span style={{
-            fontFamily: 'var(--font-display)', fontSize: '13px', fontWeight: 700,
-            letterSpacing: '0.02em', textTransform: 'uppercase',
-            color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {team}
-          </span>
-          <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: '15px', fontWeight: 700,
-            color: isLive ? 'var(--green-spark)' : 'var(--text-primary)',
-            minWidth: '16px', textAlign: 'right',
-          }}>
-            {hasScore ? score : (match.kickoff || '–')}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 export default function LiveScoresBanner() {
-  const [matches, setMatches] = useState<MatchScore[]>(PLACEHOLDER_MATCHES)
-  const [loading, setLoading] = useState(false)
+  const [matches, setMatches] = useState<Match[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
 
-  // ── Fetch live scores from /api/scores (connect your football API there) ──
   useEffect(() => {
-    // Uncomment and wire up when API is ready:
-    // setLoading(true)
-    // fetch('/api/scores')
-    //   .then(r => r.json())
-    //   .then(data => { setMatches(data); setLoading(false) })
-    //   .catch(() => setLoading(false))
+    const fetchScores = async () => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        const res = await fetch('/api/scores')
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}))
+          throw new Error(body?.error ?? `HTTP ${res.status}`)
+        }
+
+        const data: Match[] = await res.json()
+        setMatches(data)
+      } catch (err: any) {
+        console.error('LiveScoresBanner fetch error:', err)
+        setError(err?.message ?? 'Failed to load scores')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchScores()
+
+    // Refresh every 60 seconds
+    const interval = setInterval(fetchScores, 60_000)
+    return () => clearInterval(interval)
   }, [])
 
+  // ── Loading skeleton ─────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div style={{
+        background: '#111', borderBottom: '1px solid #222',
+        padding: '8px 0',
+        display: 'flex', gap: '10px', overflowX: 'auto',
+        paddingLeft: '14px', scrollbarWidth: 'none',
+      }}>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} style={{
+            flexShrink: 0, width: '120px', height: '52px',
+            borderRadius: '8px',
+            background: 'linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 50%, #1a1a1a 75%)',
+            backgroundSize: '200% 100%',
+            animation: 'shimmer 1.5s infinite',
+          }} />
+        ))}
+        <style>{`@keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }`}</style>
+      </div>
+    )
+  }
+
+  // ── Error state ──────────────────────────────────────────────────
+  if (error) {
+    return (
+      <div style={{
+        background: '#111', borderBottom: '1px solid #222',
+        padding: '10px 14px',
+        display: 'flex', alignItems: 'center', gap: '8px',
+      }}>
+        <span style={{ fontSize: '13px' }}>⚠️</span>
+        <span style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: '12px', color: '#888',
+        }}>
+          {error === 'FOOTBALL_API_KEY is not set in environment variables'
+            ? 'Add FOOTBALL_API_KEY to .env.local to see live scores'
+            : `Scores unavailable — ${error}`}
+        </span>
+      </div>
+    )
+  }
+
+  // ── No matches today ─────────────────────────────────────────────
+  if (matches.length === 0) {
+    return (
+      <div style={{
+        background: '#111', borderBottom: '1px solid #222',
+        padding: '10px 14px',
+      }}>
+        <span style={{
+          fontFamily: "'Barlow Condensed', sans-serif",
+          fontSize: '12px', color: '#666',
+        }}>
+          No matches today in top leagues
+        </span>
+      </div>
+    )
+  }
+
+  // ── Scores strip ─────────────────────────────────────────────────
+  const liveCount = matches.filter(m => m.status === 'LIVE' || m.status === 'HT').length
+
   return (
-    <div
-      style={{
-        background: 'var(--pitch-dark)',
-        borderBottom: '1px solid var(--pitch-border)',
-        padding: '12px 0',
-      }}
-    >
-      <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 16px' }}>
-        {/* Label row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-          <span className="section-label">Live Scores</span>
+    <div style={{
+      background: '#111',
+      borderBottom: '2px solid #e60000',
+    }}>
+      {/* Header row */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '5px 14px 3px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {liveCount > 0 && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: '3px',
+              background: '#e60000', color: 'white',
+              fontSize: '9px', fontWeight: 800, padding: '1px 6px',
+              borderRadius: '4px', letterSpacing: '0.06em',
+              fontFamily: "'Barlow Condensed', sans-serif",
+            }}>
+              <span style={{
+                width: '5px', height: '5px', borderRadius: '50%', background: 'white',
+                animation: 'livePulse 1s infinite',
+              }} />
+              {liveCount} LIVE
+            </span>
+          )}
           <span style={{
-            fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)',
-            letterSpacing: '0.06em',
+            fontFamily: "'Barlow Condensed', sans-serif",
+            fontSize: '11px', fontWeight: 700, color: '#aaa',
+            letterSpacing: '0.08em', textTransform: 'uppercase',
           }}>
-            EPL · La Liga · Bundesliga · Serie A · UCL
+            Scores
           </span>
         </div>
-
-        {/* Scrollable match strip */}
-        <div
-          style={{
-            display: 'flex',
-            gap: '10px',
-            overflowX: 'auto',
-            paddingBottom: '4px',
-            scrollbarWidth: 'none',
-          }}
-        >
-          {loading
-            ? Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} style={{
-                  flexShrink: 0, minWidth: '160px', height: '80px', borderRadius: '6px',
-                  background: 'var(--pitch-surface)',
-                  animation: 'shimmer 1.5s infinite',
-                  backgroundSize: '200% 100%',
-                }} />
-              ))
-            : matches.map(m => <MatchCard key={m.id} match={m} />)
-          }
-        </div>
+        <span style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '9px', color: '#555',
+        }}>
+          ↻ 60s
+        </span>
       </div>
+
+      {/* Scrollable match cards */}
+      <div style={{
+        display: 'flex', gap: '8px', overflowX: 'auto',
+        padding: '4px 14px 10px', scrollbarWidth: 'none',
+      }}>
+        {matches.map(match => {
+          const isLive = match.status === 'LIVE' || match.status === 'HT'
+          const isNS   = match.status === 'NS'
+
+          return (
+            <div key={match.id} style={{
+              flexShrink: 0, width: '130px',
+              background: isLive ? '#1a0000' : '#1a1a1a',
+              border: `1px solid ${isLive ? '#e60000' : '#2a2a2a'}`,
+              borderRadius: '8px', padding: '8px 9px',
+              display: 'flex', flexDirection: 'column', gap: '5px',
+              cursor: 'pointer',
+              transition: 'border-color 0.15s',
+            }}>
+              {/* Competition + status */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <span style={{
+                  fontFamily: "'Barlow Condensed', sans-serif",
+                  fontSize: '9px', fontWeight: 600, color: '#666',
+                  overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                  maxWidth: '70px',
+                }}>
+                  {match.competition}
+                </span>
+                <StatusBadge status={match.status} minute={match.minute} />
+              </div>
+
+              {/* Home team row */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+                  {match.homeLogo && (
+                    <img
+                      src={match.homeLogo}
+                      alt={match.homeTeam}
+                      style={{ width: '14px', height: '14px', objectFit: 'contain', flexShrink: 0 }}
+                    />
+                  )}
+                  <span style={{
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontSize: '12px', fontWeight: 700, color: 'white',
+                    overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                  }}>
+                    {shortName(match.homeTeam)}
+                  </span>
+                </div>
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '13px', fontWeight: 700,
+                  color: isNS ? '#555' : 'white',
+                  minWidth: '14px', textAlign: 'right',
+                }}>
+                  {isNS ? '–' : (match.homeScore ?? 0)}
+                </span>
+              </div>
+
+              {/* Away team row */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+                  {match.awayLogo && (
+                    <img
+                      src={match.awayLogo}
+                      alt={match.awayTeam}
+                      style={{ width: '14px', height: '14px', objectFit: 'contain', flexShrink: 0 }}
+                    />
+                  )}
+                  <span style={{
+                    fontFamily: "'Barlow Condensed', sans-serif",
+                    fontSize: '12px', fontWeight: 700, color: 'white',
+                    overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                  }}>
+                    {shortName(match.awayTeam)}
+                  </span>
+                </div>
+                <span style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '13px', fontWeight: 700,
+                  color: isNS ? '#555' : 'white',
+                  minWidth: '14px', textAlign: 'right',
+                }}>
+                  {isNS ? '–' : (match.awayScore ?? 0)}
+                </span>
+              </div>
+
+              {/* Kickoff time for NS */}
+              {isNS && (
+                <div style={{ textAlign: 'center' }}>
+                  <span style={{
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: '10px', color: '#888',
+                  }}>
+                    {match.kickoff}
+                  </span>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <style>{`
+        @keyframes livePulse {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.3; }
+        }
+        ::-webkit-scrollbar { display: none; }
+      `}</style>
     </div>
   )
 }
