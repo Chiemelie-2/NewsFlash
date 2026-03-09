@@ -20,7 +20,7 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { getArticles, Article } from '@/lib/supabase'
 import { fetchArticleImage } from '@/lib/images'
-import { Search, Download, Bell, Home, Activity, Play, User, Flame, ChevronRight, Clock } from 'lucide-react'
+import { Search, Download, Bell, Home as HomeIcon, Activity, Play, User, Flame, ChevronRight, Clock } from 'lucide-react'
 import LiveScoresBanner from '@/components/LiveScoresBanner'
 
 // ── Trending topics ───────────────────────────────────────────────
@@ -454,7 +454,7 @@ export default function Home() {
         boxShadow: '0 -2px 12px rgba(0,0,0,0.08)',
       }}>
         {[
-          { id: 'home',     icon: <Home size={22} />,     label: 'Home',     href: '/'            },
+          { id: 'home',     icon: <HomeIcon size={22} />,     label: 'Home',     href: '/'            },
           { id: 'football', icon: <span style={{ fontSize: '22px' }}>⚽</span>, label: 'Football', href: '/live-scores' },
           { id: 'video',    icon: <Play size={22} />,     label: 'Video',    href: '#'            },
           { id: 'me',       icon: <User size={22} />,     label: 'Me',       href: '#'            },
