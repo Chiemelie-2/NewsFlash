@@ -5,36 +5,12 @@
 """
 
 import os
-import re
 import feedparser
 import requests
 from supabase import create_client, Client
+from bs4 import BeautifulSoup
 from typing import List, Optional
 from postgrest import APIError
-
-try:
-    from social_publisher import publish_article
-except ImportError:
-    publish_article = None  # optional — runs fine without it
-
-
-def strip_html(text: str) -> str:
-    """Remove all HTML tags and decode common entities from a string."""
-    if not text:
-        return ""
-    # Remove HTML tags
-    clean = re.sub(r'<[^>]+>', ' ', text)
-    # Decode common HTML entities
-    entities = {
-        '&amp;': '&', '&lt;': '<', '&gt;': '>',
-        '&quot;': '"', '&#39;': "'", '&nbsp;': ' ',
-        '&apos;': "'",
-    }
-    for ent, char in entities.items():
-        clean = clean.replace(ent, char)
-    # Collapse extra whitespace
-    clean = re.sub(r'\s+', ' ', clean).strip()
-    return clean
 
 try:
     from ai import engine
@@ -96,6 +72,33 @@ def fetch_pixabay_image(query: str) -> Optional[str]:
         print(f"  Pixabay lookup failed: {e}")
     return None
 
+def fetch_article_image(url: str) -> Optional[str]:
+    """Extract the main image from the article page."""
+    try:
+        r = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0"
+        })
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # 1️⃣ OpenGraph image
+        og = soup.find("meta", property="og:image")
+        if og and og.get("content"):
+            return og["content"]
+
+        # 2️⃣ Twitter fallback
+        twitter = soup.find("meta", attrs={"name": "twitter:image"})
+        if twitter and twitter.get("content"):
+            return twitter["content"]
+
+        # 3️⃣ First <img> fallback
+        img = soup.find("img")
+        if img and img.get("src"):
+            return img["src"]
+
+    except Exception as e:
+        print("Image scrape error:", e)
+
+    return None
 
 def fetch_feed(url: str = RSS_URL):
     return feedparser.parse(url)
@@ -129,19 +132,25 @@ def insert_article(entry: dict):
     supa = get_supabase_client()
 
     title = entry.get("title", "")
-    # Use first 4 words of title as image search query
-    pix_query = " ".join(title.split()[:4])
-    image_url = fetch_pixabay_image(pix_query)
-    if image_url:
-        print(f"  ✓ Pixabay image found")
-    else:
-        print(f"  ℹ No Pixabay image — frontend will generate AI preview")
+    url = entry.get("link")
 
+# 1️⃣ Try getting the real article image
+    image_url = fetch_article_image(url)
+
+# 2️⃣ If no image found, use Pixabay
+    if not image_url:
+        pix_query = " ".join(title.split()[:4])
+        image_url = fetch_pixabay_image(pix_query)
+
+    if image_url:
+        print("  ✓ Image found")
+    else:
+        print("  ℹ No image found — frontend will generate AI preview")
     article = {
-        "title": strip_html(title),
+        "title": title,
         "source_url": entry.get("link"),
         "published": entry.get("published"),
-        "summary": strip_html(entry.get("summary", "")),
+        "summary": entry.get("summary"),
         "headline": None,
         "body": None,
         "tags": [],
@@ -169,7 +178,7 @@ def main():
             inserted = insert_article(entry)
             if inserted and engine:
                 article_id = inserted[0].get("id")
-                summary = strip_html(entry.get("summary", ""))
+                summary = entry.get("summary", "")
                 try:
                     enriched = engine.rewrite_summary(summary, url)
                     if article_id:
@@ -185,19 +194,8 @@ def main():
                             update_data["meta_description"] = enriched["meta"]
                         update_data["public"] = True
                         supa.table("articles").update(update_data).eq("id", article_id).execute()
-
-                        # ── Auto-post to Twitter & Facebook ──────────
-                        if publish_article:
-                            full_article = {**inserted[0], **update_data}
-                            publish_article(full_article)
-
                 except Exception as e:
                     print(f"AI enrichment failed for {url}: {e}")
-
-            elif inserted and publish_article:
-                # No AI engine — still post the raw article
-                publish_article(inserted[0])
-
         else:
             print(f"Skipping existing article {url}")
 
